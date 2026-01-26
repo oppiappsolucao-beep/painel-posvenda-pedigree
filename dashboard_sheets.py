@@ -3,15 +3,15 @@ import streamlit.components.v1 as components
 import pandas as pd
 import datetime
 import plotly.express as px
+import urllib.request
 import urllib.error
+import io
 
 # ===============================
 # CONFIG
 # ===============================
-DEBUG = True  # <-- quando aparecer a tabela certinha, mude para False
-
 SPREADSHEET_ID = "1Q0mLvOBxEGCojUITBLxCXRtpXVMAHE3ngvGsa2Cgf9Q"
-GID = "1396326144"  # <-- seu gid
+GID = "1396326144"  # sua aba
 
 SHEET_CSV_URL = (
     f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export"
@@ -27,14 +27,11 @@ st.markdown(
     """
     <style>
         .stApp { background-color: #F3F4F6; }
-
         .block-container {
             padding-top: 2.4rem !important;
             padding-bottom: 1.6rem !important;
         }
-
         h1, h2, h3, h4 { margin-top: 0 !important; padding-top: 0 !important; }
-
         div[data-baseweb="select"] { margin-top: 10px; }
 
         .panel-card{
@@ -44,12 +41,10 @@ st.markdown(
             border: 1px solid rgba(15,23,42,0.06);
             overflow: hidden;
         }
-
         .panel-head{
             padding: 14px 16px 0px 16px;
             background:#ffffff;
         }
-
         .panel-title{
             font-weight: 900;
             color:#0f172a;
@@ -58,7 +53,6 @@ st.markdown(
             align-items:center;
             gap:8px;
         }
-
         .panel-body{
             padding: 8px 10px 12px 10px;
             background:#ffffff;
@@ -92,8 +86,8 @@ def norm(x):
 
 def is_done(status):
     return norm(status) in [
-        "feito","concluido","concluído","ok",
-        "realizado","finalizado","concluida","concluída"
+        "feito", "concluido", "concluído", "ok",
+        "realizado", "finalizado", "concluida", "concluída"
     ]
 
 def is_error(status):
@@ -162,71 +156,75 @@ def tune_plotly(fig, height=360):
     return fig
 
 # ===============================
-# LOAD DATA
+# LOAD DATA (com timeout)
 # ===============================
 @st.cache_data(ttl=60)
 def load_sheet(url: str) -> pd.DataFrame:
     try:
-        d = pd.read_csv(url)
-        d.columns = [c.strip() for c in d.columns]
-        return d
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            content = resp.read()
+
+        df = pd.read_csv(io.BytesIO(content))
+        # limpa nomes de colunas
+        df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+        return df
+
     except urllib.error.HTTPError as e:
-        st.error(f"❌ Não consegui acessar a planilha (HTTP {e.code}).")
-        st.info("Teste este link em aba anônima; se pedir login, não está pública:")
-        st.code(url)
-        st.stop()
+        raise RuntimeError(f"HTTPError {e.code} ao acessar a planilha. Verifique se está pública.")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"URLError ao acessar a planilha: {e}")
     except Exception as e:
-        st.error("❌ Erro ao ler a planilha.")
+        raise RuntimeError(f"Erro ao ler CSV da planilha: {e}")
+
+# ===============================
+# CARREGA PLANILHA
+# ===============================
+with st.spinner("Carregando dados da planilha..."):
+    try:
+        df = load_sheet(SHEET_CSV_URL)
+    except Exception as e:
+        st.error("❌ Não consegui carregar a planilha.")
+        st.caption("Teste este link em aba anônima (sem login). Se pedir login, não está pública:")
+        st.code(SHEET_CSV_URL)
         st.exception(e)
         st.stop()
 
-df = load_sheet(SHEET_CSV_URL)
+# ===============================
+# DETECÇÃO DE COLUNAS (robusta)
+# ===============================
+COL_MES = pick_first_existing(df, ["Mês", "Mes", "MÊS", "MES"])
+COL_UNIDADE = pick_first_existing(df, ["Unidade", "Loja", "Unidade/Loja", "UNIDADE"])
+COL_RACA = pick_first_existing(df, ["Raça", "Raca", "RAÇA", "RACA"])
 
-# ===============================
-# DEBUG (sempre renderiza algo)
-# ===============================
-if DEBUG:
-    st.success("✅ App executou e carregou a planilha")
-    st.write("URL usada:", SHEET_CSV_URL)
-    st.write("Colunas encontradas:")
-    st.write(df.columns.tolist())
-    st.write("Primeiras linhas:")
-    st.dataframe(df.head(30))
-    st.warning("DEBUG está ligado. Quando estiver tudo certo, mude DEBUG=False no topo do arquivo.")
-    st.stop()
+COL_C1 = pick_first_existing(df, ["1º contato", "1 contato", "1º Contato", "Primeiro contato", "1o contato"])
+COL_S1 = pick_first_existing(df, ["Status 1º contato", "Status 1 contato", "Status 1", "Status Primeiro contato"])
 
-# ===============================
-# MAPEAMENTO DE COLUNAS
-# ===============================
-COL = {
-    "mes": "Mês",
-    "raca": "Raça",
-    "unidade": "Unidade",
-    "c1": "1º contato",
-    "s1": "Status 1º contato",
-    "c2": "2º contato",
-    "s2": "Status 2º contato",
-    "c3": "3º contato",
-    "s3": "Status 3º contato",
-}
+COL_C2 = pick_first_existing(df, ["2º contato", "2 contato", "2º Contato", "Segundo contato", "2o contato"])
+COL_S2 = pick_first_existing(df, ["Status 2º contato", "Status 2 contato", "Status 2", "Status Segundo contato"])
 
-# valida colunas essenciais
-missing = [COL["mes"], COL["unidade"], COL["raca"]]
-missing = [c for c in missing if c not in df.columns]
-if missing:
-    st.error("❌ Faltam colunas essenciais na planilha:")
-    st.write(missing)
-    st.info("Colunas encontradas na planilha:")
+COL_C3 = pick_first_existing(df, ["3º contato", "3 contato", "3º Contato", "Terceiro contato", "3o contato"])
+COL_S3 = pick_first_existing(df, ["Status 3º contato", "Status 3 contato", "Status 3", "Status Terceiro contato"])
+
+COL_VALOR = pick_first_existing(df, ["Valor do filhote", "Valor de filhote", "Valor Filhote", "Valor", "Valor do Filhote"])
+COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente", "Consultor", "Responsável"])
+
+missing_essenciais = [c for c in [COL_MES, COL_UNIDADE, COL_RACA] if c is None]
+if missing_essenciais:
+    st.error("❌ Faltam colunas essenciais (Mês/Unidade/Raça) ou estão com nome diferente.")
+    st.write("Colunas encontradas na planilha:")
     st.write(df.columns.tolist())
     st.stop()
 
-COL_VALOR = pick_first_existing(df, ["Valor do filhote", "Valor de filhote", "Valor Filhote", "Valor"])
-COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente"])
-
-# datas
-for c in ["c1", "c2", "c3"]:
-    if COL[c] in df.columns:
-        df[COL[c]] = pd.to_datetime(df[COL[c]], errors="coerce", dayfirst=True)
+# ===============================
+# CONVERSÕES
+# ===============================
+for col in [COL_C1, COL_C2, COL_C3]:
+    if col and col in df.columns:
+        df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
 
 hoje = pd.to_datetime(datetime.date.today())
 
@@ -243,46 +241,46 @@ f1, f2, f3 = st.columns(3)
 with f1:
     setor = st.selectbox("Setor", ["Pós-Venda", "Pedigree"])
 with f2:
-    meses = sorted(df[COL["mes"]].dropna().astype(str).unique())
+    meses = sorted(df[COL_MES].dropna().astype(str).unique())
     if not meses:
-        st.error("❌ A coluna 'Mês' está vazia.")
+        st.error("❌ A coluna de Mês está vazia.")
         st.stop()
-    mes = st.selectbox("Mês", meses, index=len(meses)-1)
+    mes = st.selectbox("Mês", meses, index=len(meses) - 1)
 with f3:
-    unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
+    unidades = ["Todas"] + sorted(df[COL_UNIDADE].dropna().astype(str).unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-f = df[df[COL["mes"]].astype(str) == mes].copy()
+f = df[df[COL_MES].astype(str) == str(mes)].copy()
 if unidade != "Todas":
-    f = f[f[COL["unidade"]] == unidade]
+    f = f[f[COL_UNIDADE].astype(str) == str(unidade)]
 
 # ===============================
 # CONTATOS HOJE
 # ===============================
 def count_today(date_col, status_col):
-    if date_col not in f.columns:
+    if not date_col or date_col not in f.columns:
         return 0
     sub = f[f[date_col].dt.date == hoje.date()]
-    if status_col in sub.columns:
+    if status_col and status_col in sub.columns:
         sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
 
 records_today = []
 if setor == "Pós-Venda":
-    c1 = count_today(COL["c1"], COL["s1"])
-    c2 = count_today(COL["c2"], COL["s2"])
-    c3 = count_today(COL["c3"], COL["s3"])
+    c1 = count_today(COL_C1, COL_S1)
+    c2 = count_today(COL_C2, COL_S2)
+    c3 = count_today(COL_C3, COL_S3)
 
     for _, r in f.iterrows():
-        for dc, sc in [(COL["c1"], COL["s1"]), (COL["c2"], COL["s2"]), (COL["c3"], COL["s3"])]:
-            if pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
-                records_today.append(status_bucket_today(r.get(sc)))
+        for dc, sc in [(COL_C1, COL_S1), (COL_C2, COL_S2), (COL_C3, COL_S3)]:
+            if dc and pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
+                records_today.append(status_bucket_today(r.get(sc) if sc else ""))
 else:
     c1 = c2 = c3 = 0
 
 erro_hoje = records_today.count("Erro")
 vendas_mes = len(f)
-faturamento = f[COL_VALOR].apply(brl_to_float).sum() if COL_VALOR and (COL_VALOR in f.columns) else 0
+faturamento = f[COL_VALOR].apply(brl_to_float).sum() if (COL_VALOR and COL_VALOR in f.columns) else 0
 
 # ===============================
 # KPIs
@@ -293,11 +291,11 @@ with k1: kpi_card("💬 1º contato hoje", c1, "pendentes", NAVY)
 with k2: kpi_card("💬 2º contato hoje", c2, "pendentes", NAVY_2)
 with k3: kpi_card("💬 3º contato hoje", c3, "pendentes", WINE_2)
 with k4: kpi_card("⚠️ Status com erro", erro_hoje, "atenção", WINE, value_color="#ef4444" if erro_hoje else "#0f172a")
-with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, mes, "#F59E0B")
+with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, str(mes), "#F59E0B")
 with k6: kpi_card("💰 Faturamento", money_br(faturamento), "valor do filhote", NAVY, value_size=28)
 
 # ===============================
-# GRÁFICOS (ordem)
+# GRÁFICOS
 # ===============================
 st.markdown("---")
 g1, g2 = st.columns(2)
@@ -331,10 +329,10 @@ with g2:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")
+    vp = f.groupby(COL_UNIDADE).size().reset_index(name="Total")
     fig = px.bar(
-        vp, x=COL["unidade"], y="Total", text="Total",
-        color=COL["unidade"], color_discrete_sequence=BAR_SEQ
+        vp, x=COL_UNIDADE, y="Total", text="Total",
+        color=COL_UNIDADE, color_discrete_sequence=BAR_SEQ
     )
     fig.update_traces(textposition="outside", cliponaxis=False)
     fig.update_layout(showlegend=False)
@@ -347,11 +345,11 @@ with g3:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🐶 Raças mais vendidas (mês)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    vr = (f.groupby(COL["raca"]).size().reset_index(name="Total")
+    vr = (f.groupby(COL_RACA).size().reset_index(name="Total")
           .sort_values("Total", ascending=False).head(10))
     fig = px.bar(
-        vr, x=COL["raca"], y="Total", text="Total",
-        color=COL["raca"], color_discrete_sequence=BAR_SEQ
+        vr, x=COL_RACA, y="Total", text="Total",
+        color=COL_RACA, color_discrete_sequence=BAR_SEQ
     )
     fig.update_traces(textposition="outside", cliponaxis=False)
     fig.update_layout(showlegend=False)
@@ -377,3 +375,4 @@ with g4:
     else:
         st.info("Coluna de vendedor(a) não encontrada.")
     st.markdown("</div></div>", unsafe_allow_html=True)
+
