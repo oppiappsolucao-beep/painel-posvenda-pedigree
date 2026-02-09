@@ -7,6 +7,7 @@ import urllib.request
 import urllib.error
 import io
 
+from zoneinfo import ZoneInfo
 # ===============================
 # CONFIG
 # ===============================
@@ -104,6 +105,32 @@ def status_bucket_today(status):
     if is_sent(status):
         return "Enviado"
     return "Aguardando"
+
+
+def is_aguardando(status):
+    return norm(status) == "aguardando"
+
+
+def count_today_by_status(date_col, status_col, kind: str) -> int:
+    """Conta registros na data de hoje, separados por status (enviado/aguardando/erro)."""
+    if not date_col or date_col not in f.columns:
+        return 0
+    
+    sub = f[f[date_col].dt.date == hoje]
+    if not status_col or status_col not in sub.columns:
+        return 0
+
+    kind = (kind or "").strip().lower()
+    if kind == "enviado":
+        sub = sub[sub[status_col].apply(is_sent)]
+    elif kind == "aguardando":
+        sub = sub[sub[status_col].apply(is_aguardando)]
+    elif kind == "erro":
+        sub = sub[sub[status_col].apply(is_error)]
+    else:
+        return 0
+
+    return int(len(sub))
 
 def brl_to_float(v):
     if pd.isna(v):
@@ -224,10 +251,11 @@ if missing_essenciais:
 # ===============================
 for col in [COL_C1, COL_C2, COL_C3]:
     if col and col in df.columns:
-        df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
+        # força parsing mesmo se vier como texto com espaços
+        df[col] = pd.to_datetime(df[col].astype(str).str.strip(), errors="coerce", dayfirst=True)
 
-hoje = pd.to_datetime(datetime.date.today())
-
+# 'hoje' no fuso do Brasil (Streamlit Cloud costuma rodar em UTC)
+hoje = pd.Timestamp.now(tz=ZoneInfo("America/Sao_Paulo")).date()
 # ===============================
 # HEADER
 # ===============================
@@ -258,26 +286,39 @@ if unidade != "Todas":
 # CONTATOS HOJE
 # ===============================
 def count_today(date_col, status_col):
+    """Conta registros com a data = hoje.
+    OBS: por padrão NÃO remove Enviado/Aguardando; apenas ignora os 'concluídos' se quiser usar is_done.
+    """
     if not date_col or date_col not in f.columns:
         return 0
-    sub = f[f[date_col].dt.date == hoje.date()]
-    if status_col and status_col in sub.columns:
-        sub = sub[~sub[status_col].apply(is_done)]
+    sub = f[f[date_col].dt.date == hoje]
+    # Mantém enviado e aguardando. Se quiser remover concluídos, descomente:
+    # if status_col and status_col in sub.columns:
+    #     sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
-
 records_today = []
 if setor == "Pós-Venda":
+    # Totais por contato (data = hoje)
     c1 = count_today(COL_C1, COL_S1)
     c2 = count_today(COL_C2, COL_S2)
     c3 = count_today(COL_C3, COL_S3)
 
+    # Quebra por status (data = hoje)
+    c1_enviado = count_today_by_status(COL_C1, COL_S1, "enviado")
+    c1_aguardando = count_today_by_status(COL_C1, COL_S1, "aguardando")
+    c2_enviado = count_today_by_status(COL_C2, COL_S2, "enviado")
+    c2_aguardando = count_today_by_status(COL_C2, COL_S2, "aguardando")
+    c3_enviado = count_today_by_status(COL_C3, COL_S3, "enviado")
+    c3_aguardando = count_today_by_status(COL_C3, COL_S3, "aguardando")
     for _, r in f.iterrows():
         for dc, sc in [(COL_C1, COL_S1), (COL_C2, COL_S2), (COL_C3, COL_S3)]:
-            if dc and pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
+            if dc and pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje:
                 records_today.append(status_bucket_today(r.get(sc) if sc else ""))
 else:
     c1 = c2 = c3 = 0
-
+    c1_enviado = c1_aguardando = 0
+    c2_enviado = c2_aguardando = 0
+    c3_enviado = c3_aguardando = 0
 erro_hoje = records_today.count("Erro")
 vendas_mes = len(f)
 faturamento = f[COL_VALOR].apply(brl_to_float).sum() if (COL_VALOR and COL_VALOR in f.columns) else 0
@@ -287,9 +328,9 @@ faturamento = f[COL_VALOR].apply(brl_to_float).sum() if (COL_VALOR and COL_VALOR
 # ===============================
 st.markdown("---")
 k1, k2, k3, k4, k5, k6 = st.columns(6)
-with k1: kpi_card("💬 1º contato hoje", c1, "pendentes", NAVY)
-with k2: kpi_card("💬 2º contato hoje", c2, "pendentes", NAVY_2)
-with k3: kpi_card("💬 3º contato hoje", c3, "pendentes", WINE_2)
+with k1: kpi_card("💬 1º contato hoje", c1, f"{c1_enviado} enviados • {c1_aguardando} aguardando", NAVY)
+with k2: kpi_card("💬 2º contato hoje", c2, f"{c2_enviado} enviados • {c2_aguardando} aguardando", NAVY_2)
+with k3: kpi_card("💬 3º contato hoje", c3, f"{c3_enviado} enviados • {c3_aguardando} aguardando", WINE_2)
 with k4: kpi_card("⚠️ Status com erro", erro_hoje, "atenção", WINE, value_color="#ef4444" if erro_hoje else "#0f172a")
 with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, str(mes), "#F59E0B")
 with k6: kpi_card("💰 Faturamento", money_br(faturamento), "valor do filhote", NAVY, value_size=28)
@@ -375,4 +416,3 @@ with g4:
     else:
         st.info("Coluna de vendedor(a) não encontrada.")
     st.markdown("</div></div>", unsafe_allow_html=True)
-
