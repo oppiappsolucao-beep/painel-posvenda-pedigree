@@ -1,13 +1,12 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import datetime
 import plotly.express as px
 import urllib.request
 import urllib.error
 import io
-
 from zoneinfo import ZoneInfo
+
 # ===============================
 # CONFIG
 # ===============================
@@ -76,10 +75,25 @@ BAR_SEQ = [NAVY, WINE, NAVY_2, WINE_2, "#334155", "#94a3b8"]
 # ===============================
 # HELPERS
 # ===============================
+def normalize_colname(name: str) -> str:
+    """Normaliza nomes de colunas vindos do Google Sheets/CSV:
+    - remove BOM e NBSP
+    - troca ° por º
+    - colapsa espaços
+    - lowercase
+    """
+    s = str(name).replace("\ufeff", "").replace("\u00a0", " ")
+    s = s.replace("°", "º")
+    s = " ".join(s.split())
+    return s.strip().lower()
+
 def pick_first_existing(df, candidates):
-    for c in candidates:
-        if c in df.columns:
-            return c
+    """Escolhe a primeira coluna existente comparando por nome normalizado."""
+    col_map = {normalize_colname(c): c for c in df.columns}  # normalizado -> real
+    for cand in candidates:
+        key = normalize_colname(cand)
+        if key in col_map:
+            return col_map[key]
     return None
 
 def norm(x):
@@ -106,16 +120,14 @@ def status_bucket_today(status):
         return "Enviado"
     return "Aguardando"
 
-
 def is_aguardando(status):
     return norm(status) == "aguardando"
-
 
 def count_today_by_status(date_col, status_col, kind: str) -> int:
     """Conta registros na data de hoje, separados por status (enviado/aguardando/erro)."""
     if not date_col or date_col not in f.columns:
         return 0
-    
+
     sub = f[f[date_col].dt.date == hoje]
     if not status_col or status_col not in sub.columns:
         return 0
@@ -149,6 +161,7 @@ def money_br(v):
     s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
 
+# ✅ IMPORTANTE: NÃO usar components.html (causa removeChild em produção)
 def kpi_card(title, value, subtitle, accent, value_color="#0f172a", value_size=38):
     html = f"""
     <div style="
@@ -168,7 +181,7 @@ def kpi_card(title, value, subtitle, accent, value_color="#0f172a", value_size=3
         <div style="font-size:12px;color:{GRAY};margin-top:6px;">{subtitle}</div>
     </div>
     """
-    components.html(html, height=130)
+    st.markdown(html, unsafe_allow_html=True)
 
 def tune_plotly(fig, height=360):
     fig.update_layout(
@@ -196,8 +209,16 @@ def load_sheet(url: str) -> pd.DataFrame:
             content = resp.read()
 
         df = pd.read_csv(io.BytesIO(content))
-        # limpa nomes de colunas
-        df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+
+        # ✅ limpa/normaliza nomes (remove NBSP, troca ° -> º, strip)
+        df.columns = [
+            str(c)
+            .replace("\ufeff", "")
+            .replace("\u00a0", " ")
+            .replace("°", "º")
+            .strip()
+            for c in df.columns
+        ]
         return df
 
     except urllib.error.HTTPError as e:
@@ -221,7 +242,7 @@ with st.spinner("Carregando dados da planilha..."):
         st.stop()
 
 # ===============================
-# DETECÇÃO DE COLUNAS (robusta)
+# DETECÇÃO DE COLUNAS (ROBUSTA)
 # ===============================
 COL_MES = pick_first_existing(df, ["Mês", "Mes", "MÊS", "MES"])
 COL_UNIDADE = pick_first_existing(df, ["Unidade", "Loja", "Unidade/Loja", "UNIDADE"])
@@ -230,11 +251,24 @@ COL_RACA = pick_first_existing(df, ["Raça", "Raca", "RAÇA", "RACA"])
 COL_C1 = pick_first_existing(df, ["1º contato", "1 contato", "1º Contato", "Primeiro contato", "1o contato"])
 COL_S1 = pick_first_existing(df, ["Status 1º contato", "Status 1 contato", "Status 1", "Status Primeiro contato"])
 
-COL_C2 = pick_first_existing(df, ["2º contato", "2 contato", "2º Contato", "Segundo contato", "2o contato", "2° contato", "2° Contato", "2ºcontato", "2°contato", "Contato 2", "Contato2"])
-COL_S2 = pick_first_existing(df, ["Status 2º contato", "Status 2 contato", "Status 2", "Status Segundo contato", "Status 2° contato", "Status 2° Contato", "Status 2ºcontato", "Status contato 2", "Status Contato 2"])
+# ✅ inclui variações e também funciona com espaço no fim por causa do normalize_colname
+COL_C2 = pick_first_existing(df, [
+    "2º contato", "2 contato", "2º Contato", "Segundo contato", "2o contato",
+    "2° contato", "2° Contato", "2ºcontato", "2°contato", "Contato 2", "Contato2"
+])
+COL_S2 = pick_first_existing(df, [
+    "Status 2º contato", "Status 2 contato", "Status 2", "Status Segundo contato",
+    "Status 2° contato", "Status 2° Contato", "Status 2ºcontato", "Status contato 2", "Status Contato 2"
+])
 
-COL_C3 = pick_first_existing(df, ["3º contato", "3 contato", "3º Contato", "Terceiro contato", "3o contato", "3° contato", "3° Contato", "3ºcontato", "3°contato", "Contato 3", "Contato3"])
-COL_S3 = pick_first_existing(df, ["Status 3º contato", "Status 3 contato", "Status 3", "Status Terceiro contato", "Status 3° contato", "Status 3° Contato", "Status 3ºcontato", "Status contato 3", "Status Contato 3"])
+COL_C3 = pick_first_existing(df, [
+    "3º contato", "3 contato", "3º Contato", "Terceiro contato", "3o contato",
+    "3° contato", "3° Contato", "3ºcontato", "3°contato", "Contato 3", "Contato3"
+])
+COL_S3 = pick_first_existing(df, [
+    "Status 3º contato", "Status 3 contato", "Status 3", "Status Terceiro contato",
+    "Status 3° contato", "Status 3° Contato", "Status 3ºcontato", "Status contato 3", "Status Contato 3"
+])
 
 COL_VALOR = pick_first_existing(df, ["Valor do filhote", "Valor de filhote", "Valor Filhote", "Valor", "Valor do Filhote"])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente", "Consultor", "Responsável"])
@@ -247,7 +281,7 @@ if missing_essenciais:
     st.stop()
 
 # ===============================
-# DEBUG (ajuda a identificar colunas/datas em produção)
+# DEBUG (opcional)
 # ===============================
 with st.expander("🔎 DEBUG — Detecção de colunas (clique para abrir)"):
     st.write({
@@ -260,21 +294,20 @@ with st.expander("🔎 DEBUG — Detecção de colunas (clique para abrir)"):
         "COL_VALOR": COL_VALOR,
         "COL_VENDEDOR": COL_VENDEDOR,
     })
-    st.write("Dtypes (datas):", {k: str(df[k].dtype) for k in [c for c in [COL_C1, COL_C2, COL_C3] if c and c in df.columns]})
 
 # ===============================
-# CONVERSÕES
+# CONVERSÕES (datas)
 # ===============================
 for col in [COL_C1, COL_C2, COL_C3]:
     if col and col in df.columns:
-        # força parsing mesmo se vier como texto com espaços
-        s = df[col].astype(str).str.replace("\\u00a0", " ", regex=False).str.strip()
-        # extrai somente datas no formato dd/mm/aaaa (evita texto misturado)
+        # ✅ aqui tem que ser "\u00a0" (e não "\\u00a0")
+        s = df[col].astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
         s = s.str.extract(r"(\d{1,2}/\d{1,2}/\d{4})", expand=False)
         df[col] = pd.to_datetime(s, errors="coerce", dayfirst=True)
 
-# 'hoje' no fuso do Brasil (Streamlit Cloud costuma rodar em UTC)
+# ✅ hoje no fuso do Brasil
 hoje = pd.Timestamp.now(tz=ZoneInfo("America/Sao_Paulo")).date()
+
 # ===============================
 # HEADER
 # ===============================
@@ -300,7 +333,7 @@ with f3:
 f = df[df[COL_MES].astype(str) == str(mes)].copy()
 if unidade != "Todas":
     f = f[f[COL_UNIDADE].astype(str) == str(unidade)]
-# DEBUG: verifica quantas datas batem com 'hoje' por coluna (já com filtros de mês/unidade)
+
 with st.expander("🧪 DEBUG — Contagens na data de hoje (já filtrado)"):
     st.write("Hoje (Brasil):", str(hoje))
     for label, dc in [("1º contato", COL_C1), ("2º contato", COL_C2), ("3º contato", COL_C3)]:
@@ -309,35 +342,30 @@ with st.expander("🧪 DEBUG — Contagens na data de hoje (já filtrado)"):
         else:
             st.write(label, "=> coluna NÃO encontrada")
 
-
 # ===============================
 # CONTATOS HOJE
 # ===============================
 def count_today(date_col, status_col):
-    """Conta registros com a data = hoje.
-    OBS: por padrão NÃO remove Enviado/Aguardando; apenas ignora os 'concluídos' se quiser usar is_done.
-    """
     if not date_col or date_col not in f.columns:
         return 0
     sub = f[f[date_col].dt.date == hoje]
-    # Mantém enviado e aguardando. Se quiser remover concluídos, descomente:
-    # if status_col and status_col in sub.columns:
-    #     sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
+
 records_today = []
 if setor == "Pós-Venda":
-    # Totais por contato (data = hoje)
     c1 = count_today(COL_C1, COL_S1)
     c2 = count_today(COL_C2, COL_S2)
     c3 = count_today(COL_C3, COL_S3)
 
-    # Quebra por status (data = hoje)
     c1_enviado = count_today_by_status(COL_C1, COL_S1, "enviado")
     c1_aguardando = count_today_by_status(COL_C1, COL_S1, "aguardando")
+
     c2_enviado = count_today_by_status(COL_C2, COL_S2, "enviado")
     c2_aguardando = count_today_by_status(COL_C2, COL_S2, "aguardando")
+
     c3_enviado = count_today_by_status(COL_C3, COL_S3, "enviado")
     c3_aguardando = count_today_by_status(COL_C3, COL_S3, "aguardando")
+
     for _, r in f.iterrows():
         for dc, sc in [(COL_C1, COL_S1), (COL_C2, COL_S2), (COL_C3, COL_S3)]:
             if dc and pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje:
@@ -347,6 +375,7 @@ else:
     c1_enviado = c1_aguardando = 0
     c2_enviado = c2_aguardando = 0
     c3_enviado = c3_aguardando = 0
+
 erro_hoje = records_today.count("Erro")
 vendas_mes = len(f)
 faturamento = f[COL_VALOR].apply(brl_to_float).sum() if (COL_VALOR and COL_VALOR in f.columns) else 0
