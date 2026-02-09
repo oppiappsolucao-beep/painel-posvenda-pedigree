@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import datetime
 import plotly.express as px
 import urllib.request
 import urllib.error
@@ -123,27 +122,6 @@ def status_bucket_today(status):
 def is_aguardando(status):
     return norm(status) == "aguardando"
 
-def count_today_by_status(date_col, status_col, kind: str) -> int:
-    """Conta registros na data de hoje, separados por status (enviado/aguardando/erro)."""
-    if not date_col or date_col not in f.columns:
-        return 0
-
-    sub = f[f[date_col].dt.date == hoje]
-    if not status_col or status_col not in sub.columns:
-        return 0
-
-    kind = (kind or "").strip().lower()
-    if kind == "enviado":
-        sub = sub[sub[status_col].apply(is_sent)]
-    elif kind == "aguardando":
-        sub = sub[sub[status_col].apply(is_aguardando)]
-    elif kind == "erro":
-        sub = sub[sub[status_col].apply(is_error)]
-    else:
-        return 0
-
-    return int(len(sub))
-
 def brl_to_float(v):
     if pd.isna(v):
         return 0.0
@@ -251,7 +229,6 @@ COL_RACA = pick_first_existing(df, ["Raça", "Raca", "RAÇA", "RACA"])
 COL_C1 = pick_first_existing(df, ["1º contato", "1 contato", "1º Contato", "Primeiro contato", "1o contato"])
 COL_S1 = pick_first_existing(df, ["Status 1º contato", "Status 1 contato", "Status 1", "Status Primeiro contato"])
 
-# ✅ inclui variações e também funciona com espaço no fim por causa do normalize_colname
 COL_C2 = pick_first_existing(df, [
     "2º contato", "2 contato", "2º Contato", "Segundo contato", "2o contato",
     "2° contato", "2° Contato", "2ºcontato", "2°contato", "Contato 2", "Contato2"
@@ -300,7 +277,6 @@ with st.expander("🔎 DEBUG — Detecção de colunas (clique para abrir)"):
 # ===============================
 for col in [COL_C1, COL_C2, COL_C3]:
     if col and col in df.columns:
-        # ✅ aqui tem que ser "\u00a0" (e não "\\u00a0")
         s = df[col].astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
         s = s.str.extract(r"(\d{1,2}/\d{1,2}/\d{4})", expand=False)
         df[col] = pd.to_datetime(s, errors="coerce", dayfirst=True)
@@ -330,32 +306,64 @@ with f3:
     unidades = ["Todas"] + sorted(df[COL_UNIDADE].dropna().astype(str).unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-f = df[df[COL_MES].astype(str) == str(mes)].copy()
+# ✅ f_mes: usado para VENDAS/FATURAMENTO/GRÁFICOS (depende do Mês)
+f_mes = df[df[COL_MES].astype(str) == str(mes)].copy()
 if unidade != "Todas":
-    f = f[f[COL_UNIDADE].astype(str) == str(unidade)]
+    f_mes = f_mes[f_mes[COL_UNIDADE].astype(str) == str(unidade)]
 
-with st.expander("🧪 DEBUG — Contagens na data de hoje (já filtrado)"):
+# ✅ f_hoje: usado para CONTATOS HOJE (IGNORA coluna Mês, usa só a data do contato)
+f_hoje = df.copy()
+if unidade != "Todas":
+    f_hoje = f_hoje[f_hoje[COL_UNIDADE].astype(str) == str(unidade)]
+
+with st.expander("🧪 DEBUG — Contagens na data de hoje (contatos ignoram Mês)"):
     st.write("Hoje (Brasil):", str(hoje))
     for label, dc in [("1º contato", COL_C1), ("2º contato", COL_C2), ("3º contato", COL_C3)]:
-        if dc and dc in f.columns:
-            st.write(label, "coluna:", dc, "=> matches hoje:", int((f[dc].dt.date == hoje).sum()), "não-nulos:", int(f[dc].notna().sum()))
+        if dc and dc in f_hoje.columns:
+            st.write(
+                label,
+                "coluna:", dc,
+                "=> matches hoje:", int((f_hoje[dc].dt.date == hoje).sum()),
+                "não-nulos:", int(f_hoje[dc].notna().sum())
+            )
         else:
             st.write(label, "=> coluna NÃO encontrada")
 
 # ===============================
-# CONTATOS HOJE
+# CONTATOS HOJE (AGORA USA f_hoje)
 # ===============================
-def count_today(date_col, status_col):
-    if not date_col or date_col not in f.columns:
+def count_today(date_col):
+    if not date_col or date_col not in f_hoje.columns:
         return 0
-    sub = f[f[date_col].dt.date == hoje]
+    sub = f_hoje[f_hoje[date_col].dt.date == hoje]
+    return int(len(sub))
+
+def count_today_by_status(date_col, status_col, kind: str) -> int:
+    """Conta registros na data de hoje, separados por status (enviado/aguardando/erro)."""
+    if not date_col or date_col not in f_hoje.columns:
+        return 0
+
+    sub = f_hoje[f_hoje[date_col].dt.date == hoje]
+    if not status_col or status_col not in sub.columns:
+        return 0
+
+    kind = (kind or "").strip().lower()
+    if kind == "enviado":
+        sub = sub[sub[status_col].apply(is_sent)]
+    elif kind == "aguardando":
+        sub = sub[sub[status_col].apply(is_aguardando)]
+    elif kind == "erro":
+        sub = sub[sub[status_col].apply(is_error)]
+    else:
+        return 0
+
     return int(len(sub))
 
 records_today = []
 if setor == "Pós-Venda":
-    c1 = count_today(COL_C1, COL_S1)
-    c2 = count_today(COL_C2, COL_S2)
-    c3 = count_today(COL_C3, COL_S3)
+    c1 = count_today(COL_C1)
+    c2 = count_today(COL_C2)
+    c3 = count_today(COL_C3)
 
     c1_enviado = count_today_by_status(COL_C1, COL_S1, "enviado")
     c1_aguardando = count_today_by_status(COL_C1, COL_S1, "aguardando")
@@ -366,7 +374,8 @@ if setor == "Pós-Venda":
     c3_enviado = count_today_by_status(COL_C3, COL_S3, "enviado")
     c3_aguardando = count_today_by_status(COL_C3, COL_S3, "aguardando")
 
-    for _, r in f.iterrows():
+    # registros do dia para pizza (usa f_hoje, não f_mes)
+    for _, r in f_hoje.iterrows():
         for dc, sc in [(COL_C1, COL_S1), (COL_C2, COL_S2), (COL_C3, COL_S3)]:
             if dc and pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje:
                 records_today.append(status_bucket_today(r.get(sc) if sc else ""))
@@ -377,8 +386,10 @@ else:
     c3_enviado = c3_aguardando = 0
 
 erro_hoje = records_today.count("Erro")
-vendas_mes = len(f)
-faturamento = f[COL_VALOR].apply(brl_to_float).sum() if (COL_VALOR and COL_VALOR in f.columns) else 0
+
+# ✅ Vendas/Faturamento continuam por mês
+vendas_mes = len(f_mes)
+faturamento = f_mes[COL_VALOR].apply(brl_to_float).sum() if (COL_VALOR and COL_VALOR in f_mes.columns) else 0
 
 # ===============================
 # KPIs
@@ -393,7 +404,7 @@ with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, str(mes), "#F59E0B")
 with k6: kpi_card("💰 Faturamento", money_br(faturamento), "valor do filhote", NAVY, value_size=28)
 
 # ===============================
-# GRÁFICOS
+# GRÁFICOS (USAM f_mes)
 # ===============================
 st.markdown("---")
 g1, g2 = st.columns(2)
@@ -427,7 +438,7 @@ with g2:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    vp = f.groupby(COL_UNIDADE).size().reset_index(name="Total")
+    vp = f_mes.groupby(COL_UNIDADE).size().reset_index(name="Total")
     fig = px.bar(
         vp, x=COL_UNIDADE, y="Total", text="Total",
         color=COL_UNIDADE, color_discrete_sequence=BAR_SEQ
@@ -443,7 +454,7 @@ with g3:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🐶 Raças mais vendidas (mês)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    vr = (f.groupby(COL_RACA).size().reset_index(name="Total")
+    vr = (f_mes.groupby(COL_RACA).size().reset_index(name="Total")
           .sort_values("Total", ascending=False).head(10))
     fig = px.bar(
         vr, x=COL_RACA, y="Total", text="Total",
@@ -460,8 +471,8 @@ with g4:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏆 Vendas por vendedora (mês)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    if COL_VENDEDOR and (COL_VENDEDOR in f.columns):
-        vv = (f.groupby(COL_VENDEDOR).size().reset_index(name="Total")
+    if COL_VENDEDOR and (COL_VENDEDOR in f_mes.columns):
+        vv = (f_mes.groupby(COL_VENDEDOR).size().reset_index(name="Total")
               .sort_values("Total", ascending=False))
         fig = px.bar(
             vv, x=COL_VENDEDOR, y="Total", text="Total",
