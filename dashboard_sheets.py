@@ -230,11 +230,11 @@ COL_RACA = pick_first_existing(df, ["Raça", "Raca", "RAÇA", "RACA"])
 COL_C1 = pick_first_existing(df, ["1º contato", "1 contato", "1º Contato", "Primeiro contato", "1o contato"])
 COL_S1 = pick_first_existing(df, ["Status 1º contato", "Status 1 contato", "Status 1", "Status Primeiro contato"])
 
-COL_C2 = pick_first_existing(df, ["2º contato", "2 contato", "2º Contato", "Segundo contato", "2o contato"])
-COL_S2 = pick_first_existing(df, ["Status 2º contato", "Status 2 contato", "Status 2", "Status Segundo contato"])
+COL_C2 = pick_first_existing(df, ["2º contato", "2 contato", "2º Contato", "Segundo contato", "2o contato", "2° contato", "2° Contato", "2ºcontato", "2°contato", "Contato 2", "Contato2"])
+COL_S2 = pick_first_existing(df, ["Status 2º contato", "Status 2 contato", "Status 2", "Status Segundo contato", "Status 2° contato", "Status 2° Contato", "Status 2ºcontato", "Status contato 2", "Status Contato 2"])
 
-COL_C3 = pick_first_existing(df, ["3º contato", "3 contato", "3º Contato", "Terceiro contato", "3o contato"])
-COL_S3 = pick_first_existing(df, ["Status 3º contato", "Status 3 contato", "Status 3", "Status Terceiro contato"])
+COL_C3 = pick_first_existing(df, ["3º contato", "3 contato", "3º Contato", "Terceiro contato", "3o contato", "3° contato", "3° Contato", "3ºcontato", "3°contato", "Contato 3", "Contato3"])
+COL_S3 = pick_first_existing(df, ["Status 3º contato", "Status 3 contato", "Status 3", "Status Terceiro contato", "Status 3° contato", "Status 3° Contato", "Status 3ºcontato", "Status contato 3", "Status Contato 3"])
 
 COL_VALOR = pick_first_existing(df, ["Valor do filhote", "Valor de filhote", "Valor Filhote", "Valor", "Valor do Filhote"])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente", "Consultor", "Responsável"])
@@ -247,12 +247,31 @@ if missing_essenciais:
     st.stop()
 
 # ===============================
+# DEBUG (ajuda a identificar colunas/datas em produção)
+# ===============================
+with st.expander("🔎 DEBUG — Detecção de colunas (clique para abrir)"):
+    st.write({
+        "COL_MES": COL_MES,
+        "COL_UNIDADE": COL_UNIDADE,
+        "COL_RACA": COL_RACA,
+        "COL_C1": COL_C1, "COL_S1": COL_S1,
+        "COL_C2": COL_C2, "COL_S2": COL_S2,
+        "COL_C3": COL_C3, "COL_S3": COL_S3,
+        "COL_VALOR": COL_VALOR,
+        "COL_VENDEDOR": COL_VENDEDOR,
+    })
+    st.write("Dtypes (datas):", {k: str(df[k].dtype) for k in [c for c in [COL_C1, COL_C2, COL_C3] if c and c in df.columns]})
+
+# ===============================
 # CONVERSÕES
 # ===============================
 for col in [COL_C1, COL_C2, COL_C3]:
     if col and col in df.columns:
         # força parsing mesmo se vier como texto com espaços
-        df[col] = pd.to_datetime(df[col].astype(str).str.strip(), errors="coerce", dayfirst=True)
+        s = df[col].astype(str).str.replace("\\u00a0", " ", regex=False).str.strip()
+        # extrai somente datas no formato dd/mm/aaaa (evita texto misturado)
+        s = s.str.extract(r"(\d{1,2}/\d{1,2}/\d{4})", expand=False)
+        df[col] = pd.to_datetime(s, errors="coerce", dayfirst=True)
 
 # 'hoje' no fuso do Brasil (Streamlit Cloud costuma rodar em UTC)
 hoje = pd.Timestamp.now(tz=ZoneInfo("America/Sao_Paulo")).date()
@@ -281,6 +300,15 @@ with f3:
 f = df[df[COL_MES].astype(str) == str(mes)].copy()
 if unidade != "Todas":
     f = f[f[COL_UNIDADE].astype(str) == str(unidade)]
+# DEBUG: verifica quantas datas batem com 'hoje' por coluna (já com filtros de mês/unidade)
+with st.expander("🧪 DEBUG — Contagens na data de hoje (já filtrado)"):
+    st.write("Hoje (Brasil):", str(hoje))
+    for label, dc in [("1º contato", COL_C1), ("2º contato", COL_C2), ("3º contato", COL_C3)]:
+        if dc and dc in f.columns:
+            st.write(label, "coluna:", dc, "=> matches hoje:", int((f[dc].dt.date == hoje).sum()), "não-nulos:", int(f[dc].notna().sum()))
+        else:
+            st.write(label, "=> coluna NÃO encontrada")
+
 
 # ===============================
 # CONTATOS HOJE
