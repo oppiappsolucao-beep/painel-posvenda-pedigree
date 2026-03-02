@@ -1,7 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-import datetime
 import plotly.express as px
 
 # =====================================================
@@ -10,7 +9,7 @@ import plotly.express as px
 st.set_page_config(page_title="Painel Pós-Venda", layout="wide")
 
 # =====================================================
-# LOGIN
+# LOGIN CONFIG
 # =====================================================
 APP_USER = "operacao"
 APP_PASS = "100316"
@@ -23,22 +22,21 @@ def ensure_login():
     if st.session_state.logged_in:
         return True
 
+    # ================= CSS LOGIN =================
     st.markdown("""
     <style>
+
     .stApp{
-        background:
-        radial-gradient(1000px 500px at 10% 0%, rgba(27,29,109,.12), transparent),
-        radial-gradient(900px 500px at 90% 0%, rgba(155,0,51,.10), transparent),
-        #F3F4F6;
+        background:#F3F4F6;
     }
 
     .login-box{
         max-width:520px;
-        margin:9vh auto;
+        margin:10vh auto;
         background:white;
-        border-radius:22px;
-        padding:28px;
-        box-shadow:0 20px 45px rgba(0,0,0,.08);
+        border-radius:20px;
+        padding:30px;
+        box-shadow:0 20px 40px rgba(0,0,0,.08);
         font-family:Inter;
     }
 
@@ -51,21 +49,30 @@ def ensure_login():
     .login-sub{
         font-size:13px;
         color:#64748b;
-        margin-bottom:15px;
+        margin-bottom:20px;
     }
 
     div.stButton > button{
-        background:linear-gradient(135deg,#1B1D6D,#9B0033);
-        color:white;
-        border-radius:14px;
-        height:44px;
-        font-weight:900;
-        border:none;
+        background:#000000 !important;
+        color:white !important;
+        border:none !important;
+        border-radius:12px !important;
+        height:48px !important;
+        font-weight:900 !important;
+        font-size:15px !important;
+        box-shadow:none !important;
     }
+
+    div.stButton > button:hover{
+        background:#111111 !important;
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
+    # ================= LOGIN UI =================
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
+
     st.markdown('<div class="login-title">🔒 Acesso ao Painel</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-sub">Digite usuário e senha</div>', unsafe_allow_html=True)
 
@@ -86,11 +93,12 @@ def ensure_login():
     return False
 
 
+# BLOQUEIA DASHBOARD
 if not ensure_login():
     st.stop()
 
 # =====================================================
-# GOOGLE SHEET
+# GOOGLE SHEETS
 # =====================================================
 SHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
@@ -150,7 +158,7 @@ if unidade!="Todas":
     f=f[f[unidade_col]==unidade]
 
 # =====================================================
-# KPIS
+# KPI CARDS
 # =====================================================
 def kpi(title,value,color):
     html=f"""
