@@ -4,58 +4,76 @@ import pandas as pd
 import datetime
 import plotly.express as px
 
-# ===============================
-# LOGIN (ANTES DE TUDO)
-# ===============================
+# =========================================================
+# CONFIG (TEM QUE SER A PRIMEIRA COISA DO APP)
+# =========================================================
+st.set_page_config(page_title="Painel Pós-Venda", layout="wide")
+
+# =========================================================
+# LOGIN (ANTES DE CARREGAR PLANILHA / DASH)
+# =========================================================
 APP_USER = "operacao"
 APP_PASS = "100316"
 
-def ensure_login():
+def ensure_login() -> bool:
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
 
     if st.session_state.logged_in:
         return True
 
-    # Página de login
-    st.set_page_config(page_title="Login • Pós-Venda", layout="centered")
-
+    # CSS + Tela de Login
     st.markdown(
         """
         <style>
             .stApp { background-color: #F3F4F6; }
-            .login-card{
-                max-width:420px;
+
+            /* centraliza o bloco do login */
+            .login-wrap{
+                max-width: 520px;
                 margin: 8vh auto 0 auto;
+                padding: 0 12px;
+                font-family: Inter, Arial, sans-serif;
+            }
+
+            .login-card{
                 background:#ffffff;
                 border-radius:18px;
                 box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
                 border: 1px solid rgba(15,23,42,0.06);
                 padding: 22px 20px;
-                font-family: Inter, Arial, sans-serif;
             }
+
             .login-title{
                 font-weight: 900;
                 color:#0f172a;
                 font-size: 22px;
                 margin-bottom: 2px;
+                display:flex;
+                align-items:center;
+                gap:10px;
             }
+
             .login-sub{
                 color:#64748b;
                 font-size: 13px;
                 margin-bottom: 14px;
             }
+
+            /* “esconde” o conteúdo do dashboard quando não logado */
+            .dashboard-hidden { display:none; }
         </style>
         """,
         unsafe_allow_html=True
     )
 
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.markdown('<div class="login-title">🔒 Acesso ao Painel</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-sub">Digite usuário e senha para entrar no Pós-Venda.</div>', unsafe_allow_html=True)
 
-    user = st.text_input("Usuário", placeholder="Ex: operacao")
-    pwd = st.text_input("Senha", type="password", placeholder="••••••")
+    user = st.text_input("Usuário")  # SEM placeholder
+    pwd = st.text_input("Senha", type="password")  # SEM placeholder
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -64,8 +82,6 @@ def ensure_login():
         limpar = st.button("Limpar", use_container_width=True)
 
     if limpar:
-        st.session_state.pop("login_user", None)
-        st.session_state.pop("login_pwd", None)
         st.rerun()
 
     if entrar:
@@ -75,59 +91,54 @@ def ensure_login():
         else:
             st.error("Usuário ou senha inválidos.")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)
     return False
 
 
-# 🔐 trava tudo aqui
+# trava tudo aqui
 if not ensure_login():
     st.stop()
 
-# ===============================
-# CONFIG
-# ===============================
+# =========================================================
+# SEU DASHBOARD A PARTIR DAQUI
+# =========================================================
+
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1Q0mLvOBxEGCojUITBLxCXRtpXVMAHE3ngvGsa2Cgf9Q"
     "/gviz/tq?tqx=out:csv"
 )
 
-st.set_page_config(page_title="Painel Pós-Venda", layout="wide")
-
 # ===============================
-# CSS (card branco + fundo cinza, igual Lovable)
+# CSS (card branco + fundo cinza)
 # ===============================
 st.markdown(
     """
     <style>
         .stApp { background-color: #F3F4F6; }
 
-        /* resolve título “comendo” no topo */
+        /* topo */
         .block-container {
             padding-top: 2.4rem !important;
             padding-bottom: 1.6rem !important;
         }
-
         h1, h2, h3, h4 { margin-top: 0 !important; padding-top: 0 !important; }
 
-        /* filtros com respiro */
+        /* filtros */
         div[data-baseweb="select"] { margin-top: 10px; }
 
-        /* CARD – tudo branco dentro */
+        /* CARD branco */
         .panel-card{
             background:#ffffff;
             border-radius:18px;
             box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
             border: 1px solid rgba(15,23,42,0.06);
-            overflow: hidden; /* corta o gráfico nas bordas arredondadas */
+            overflow: hidden;
         }
-
-        /* título do card (sem “faixa branca separada”) */
         .panel-head{
             padding: 14px 16px 0px 16px;
             background:#ffffff;
         }
-
         .panel-title{
             font-weight: 900;
             color:#0f172a;
@@ -136,7 +147,6 @@ st.markdown(
             align-items:center;
             gap:8px;
         }
-
         .panel-body{
             padding: 8px 10px 12px 10px;
             background:#ffffff;
@@ -147,7 +157,7 @@ st.markdown(
 )
 
 # ===============================
-# PALETA (LOGO SKOOBPET)
+# PALETA
 # ===============================
 NAVY = "#1B1D6D"
 WINE = "#9B0033"
@@ -290,13 +300,13 @@ with f1:
     setor = st.selectbox("Setor", ["Pós-Venda", "Pedigree"])
 with f2:
     meses = sorted(df[COL["mes"]].dropna().astype(str).unique())
-    mes = st.selectbox("Mês", meses, index=len(meses)-1)
+    mes = st.selectbox("Mês", meses, index=len(meses)-1 if len(meses) else 0)
 with f3:
-    unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
+    unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist()) if COL["unidade"] in df.columns else ["Todas"]
     unidade = st.selectbox("Unidade", unidades)
 
-f = df[df[COL["mes"]].astype(str) == mes].copy()
-if unidade != "Todas":
+f = df[df[COL["mes"]].astype(str) == mes].copy() if COL["mes"] in df.columns else df.copy()
+if unidade != "Todas" and COL["unidade"] in df.columns:
     f = f[f[COL["unidade"]] == unidade]
 
 # ===============================
@@ -336,7 +346,7 @@ with k1: kpi_card("💬 1º contato hoje", c1, "pendentes", NAVY)
 with k2: kpi_card("💬 2º contato hoje", c2, "pendentes", NAVY_2)
 with k3: kpi_card("💬 3º contato hoje", c3, "pendentes", WINE_2)
 with k4: kpi_card("⚠️ Status com erro", erro_hoje, "atenção", WINE, value_color="#ef4444" if erro_hoje else "#0f172a")
-with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, mes, "#F59E0B")
+with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, str(mes), "#F59E0B")
 with k6: kpi_card("💰 Faturamento", money_br(faturamento), "valor do filhote", NAVY, value_size=28)
 
 # ===============================
@@ -368,24 +378,30 @@ with g1:
 # 2) Vendas por loja (Unidade)
 with g2:
     st.markdown('<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">', unsafe_allow_html=True)
-    vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")
-    fig = px.bar(vp, x=COL["unidade"], y="Total", text="Total",
-                 color=COL["unidade"], color_discrete_sequence=BAR_SEQ)
-    fig.update_traces(textposition="outside", cliponaxis=False)
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
+    if COL["unidade"] in f.columns:
+        vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")
+        fig = px.bar(vp, x=COL["unidade"], y="Total", text="Total",
+                     color=COL["unidade"], color_discrete_sequence=BAR_SEQ)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
+    else:
+        st.info("Coluna Unidade não encontrada.")
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 # 3) Raças mais vendidas (mês)
 with g3:
     st.markdown('<div class="panel-card"><div class="panel-head"><div class="panel-title">🐶 Raças mais vendidas (mês)</div></div><div class="panel-body">', unsafe_allow_html=True)
-    vr = (f.groupby(COL["raca"]).size().reset_index(name="Total")
-          .sort_values("Total", ascending=False).head(10))
-    fig = px.bar(vr, x=COL["raca"], y="Total", text="Total",
-                 color=COL["raca"], color_discrete_sequence=BAR_SEQ)
-    fig.update_traces(textposition="outside", cliponaxis=False)
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
+    if COL["raca"] in f.columns:
+        vr = (f.groupby(COL["raca"]).size().reset_index(name="Total")
+              .sort_values("Total", ascending=False).head(10))
+        fig = px.bar(vr, x=COL["raca"], y="Total", text="Total",
+                     color=COL["raca"], color_discrete_sequence=BAR_SEQ)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
+    else:
+        st.info("Coluna Raça não encontrada.")
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 # 4) Vendas por vendedora (mês)
@@ -400,5 +416,5 @@ with g4:
         fig.update_layout(showlegend=False)
         st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
     else:
-        st.info("Coluna de vendedor não encontrada")
+        st.info("Coluna de vendedor não encontrada.")
     st.markdown("</div></div>", unsafe_allow_html=True)
