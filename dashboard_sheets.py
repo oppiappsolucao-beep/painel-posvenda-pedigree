@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 import datetime
 import plotly.express as px
+import re
 
 # ===============================
 # LOGIN (ADICIONADO - NÃO MUDA O DASHBOARD)
@@ -204,9 +205,12 @@ BAR_SEQ = [NAVY, WINE, NAVY_2, WINE_2, "#334155", "#94a3b8"]
 # HELPERS (IGUAL AO SEU)
 # ===============================
 def pick_first_existing(df, candidates):
+    # compara também ignorando NBSP e espaços invisíveis
+    cols = {str(c).replace("\u00a0", " ").strip(): c for c in df.columns}
     for c in candidates:
-        if c in df.columns:
-            return c
+        key = str(c).replace("\u00a0", " ").strip()
+        if key in cols:
+            return cols[key]
     return None
 
 def norm(x):
@@ -233,28 +237,44 @@ def status_bucket_today(status):
         return "Enviado"
     return "Aguardando"
 
+# ✅ BLINDADO: converte qualquer variação BR (R$ 7.000,00 / 7000,00 / 7.000 / 7000 / etc)
 def brl_to_float(v):
-    if pd.isna(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return 0.0
+
     # se vier número puro
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
             return float(v)
         except:
             return 0.0
-    s = str(v).replace("R$", "").replace(" ", "").strip()
-    # mantém só números e separadores básicos
-    s = s.replace("\u00a0", "")  # NBSP
-    if "," in s and "." in s:
+
+    s = str(v)
+    s = s.replace("\u00a0", " ")  # NBSP
+    s = s.strip()
+
+    if s == "" or s.lower() in {"nan", "none", "-"}:
+        return 0.0
+
+    s = s.replace("R$", "").strip()
+    # remove tudo que não seja dígito, vírgula, ponto ou sinal
+    s = re.sub(r"[^0-9,\.\-]", "", s)
+
+    # formato BR: remove milhares (.) e troca decimal (,)
+    if "," in s:
         s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
+    # senão, mantém ponto como decimal (se houver)
+
     try:
         return float(s)
     except:
         return 0.0
 
 def money_br(v):
+    try:
+        v = float(v)
+    except:
+        v = 0.0
     s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
 
@@ -291,12 +311,13 @@ def tune_plotly(fig, height=360):
     return fig
 
 # ===============================
-# LOAD DATA (IGUAL AO SEU)
+# LOAD DATA (IGUAL AO SEU) + ✅ LIMPEZA DE COLUNAS BLINDADA
 # ===============================
 @st.cache_data
 def load_sheet():
     d = pd.read_csv(SHEET_CSV_URL)
-    d.columns = [c.strip() for c in d.columns]
+    # remove NBSP e espaços invisíveis dos headers
+    d.columns = [str(c).replace("\u00a0", " ").strip() for c in d.columns]
     return d
 
 df = load_sheet()
@@ -386,7 +407,17 @@ erro_hoje = records_today.count("Erro")
 
 # (mantém igual) esses continuam do mês selecionado
 vendas_mes = len(f)
-faturamento = f[COL_VALOR].apply(brl_to_float).sum() if COL_VALOR and (COL_VALOR in f.columns) else 0
+
+# ✅ FATURAMENTO (BLINDADO) — não zera março por causa de NBSP/strings/formatos
+if COL_VALOR and (COL_VALOR in f.columns):
+    faturamento = (
+        f[COL_VALOR]
+        .apply(brl_to_float)
+        .fillna(0)
+        .sum()
+    )
+else:
+    faturamento = 0.0
 
 # ===============================
 # KPIs (IGUAL AO SEU)
