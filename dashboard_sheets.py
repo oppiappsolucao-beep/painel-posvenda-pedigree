@@ -236,7 +236,7 @@ def status_bucket_today(status):
 def brl_to_float(v):
     if pd.isna(v):
         return 0.0
-    s = str(v).replace("R$", "").replace(" ", "")
+    s = str(v).replace("\u00a0", "").replace("R$", "").replace(" ", "")
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
@@ -305,7 +305,15 @@ COL = {
     "s3": "Status 3º contato",
 }
 
-COL_VALOR = pick_first_existing(df, ["Valor de filhote", "Valor Filhote", "Valor"])
+# ✅ NÃO MUDA NADA DO DASH: só garante achar a coluna certa do valor
+COL_VALOR = pick_first_existing(df, [
+    "Valor do filhote",
+    "Valor de filhote",
+    "Valor Filhote",
+    "Valor do Filhote",
+    "Valor filhote",
+    "Valor",
+])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente"])
 
 for c in ["c1", "c2", "c3"]:
@@ -339,49 +347,46 @@ with f3:
     unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-# Dataset do mês (para o resto do dashboard)
+# filtro normal do mês (para Vendas no mês / Faturamento / gráficos)
 f = df[df[COL["mes"]].astype(str) == mes].copy()
 if unidade != "Todas":
     f = f[f[COL["unidade"]] == unidade]
 
-# ===============================
-# CONTATOS HOJE (IGNORA FILTRO DE MÊS) ✅
-# - NÃO ALTERA MAIS NADA, SÓ OS 4 KPIs:
-#   1º contato hoje, 2º contato hoje, 3º contato hoje, Status com erro
-# - pega o total do DIA (hoje) em TODOS os meses (planilha inteira)
-# - respeita o filtro de Unidade (se escolher uma)
-# ===============================
-
-# Base GLOBAL para os KPIs (IGNORA o mês selecionado)
-df_kpi = df.copy()
+# ✅ base “GLOBAL” para os KPIs de HOJE (ignora o filtro de mês)
+df_global = df.copy()
 if unidade != "Todas":
-    df_kpi = df_kpi[df_kpi[COL["unidade"]] == unidade].copy()
+    df_global = df_global[df_global[COL["unidade"]] == unidade].copy()
 
-def count_today_global(base_df, date_col, status_col):
-    if date_col not in base_df.columns:
+# ===============================
+# CONTATOS HOJE (AJUSTE: AGORA PEGA TODOS OS MESES)
+# ===============================
+def count_today_in(dataframe, date_col, status_col):
+    if date_col not in dataframe.columns:
         return 0
-    sub = base_df[base_df[date_col].dt.date == hoje.date()]
+    sub = dataframe[dataframe[date_col].dt.date == hoje.date()]
     if status_col in sub.columns:
-        sub = sub[~sub[status_col].apply(is_done)]  # remove concluídos
+        sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
 
 records_today = []
-if setor == "Pós-Venda":
-    c1 = count_today_global(df_kpi, COL["c1"], COL["s1"])
-    c2 = count_today_global(df_kpi, COL["c2"], COL["s2"])
-    c3 = count_today_global(df_kpi, COL["c3"], COL["s3"])
 
-    for _, r in df_kpi.iterrows():
+if setor == "Pós-Venda":
+    # ✅ 1º/2º/3º contato HOJE: agora usa df_global (todos os meses)
+    c1 = count_today_in(df_global, COL["c1"], COL["s1"])
+    c2 = count_today_in(df_global, COL["c2"], COL["s2"])
+    c3 = count_today_in(df_global, COL["c3"], COL["s3"])
+
+    # ✅ Status com erro HOJE: também usa df_global (todos os meses)
+    for _, r in df_global.iterrows():
         for dc, sc in [(COL["c1"], COL["s1"]), (COL["c2"], COL["s2"]), (COL["c3"], COL["s3"])]:
-            d = r.get(dc)
-            if pd.notna(d) and pd.to_datetime(d).date() == hoje.date():
+            if pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
                 records_today.append(status_bucket_today(r.get(sc)))
 else:
     c1 = c2 = c3 = 0
 
 erro_hoje = records_today.count("Erro")
 
-# Esses dois continuam do mês filtrado (como já estava)
+# ✅ Vendas no mês / Faturamento continuam IGUAIS (usam o filtro do mês)
 vendas_mes = len(f)
 faturamento = f[COL_VALOR].apply(brl_to_float).sum() if COL_VALOR else 0
 
