@@ -339,35 +339,49 @@ with f3:
     unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
+# Dataset do mês (para o resto do dashboard)
 f = df[df[COL["mes"]].astype(str) == mes].copy()
 if unidade != "Todas":
     f = f[f[COL["unidade"]] == unidade]
 
 # ===============================
-# CONTATOS HOJE (IGUAL AO SEU)
+# CONTATOS HOJE (IGNORA FILTRO DE MÊS) ✅
+# - NÃO ALTERA MAIS NADA, SÓ OS 4 KPIs:
+#   1º contato hoje, 2º contato hoje, 3º contato hoje, Status com erro
+# - pega o total do DIA (hoje) em TODOS os meses (planilha inteira)
+# - respeita o filtro de Unidade (se escolher uma)
 # ===============================
-def count_today(date_col, status_col):
-    if date_col not in f.columns:
+
+# Base GLOBAL para os KPIs (IGNORA o mês selecionado)
+df_kpi = df.copy()
+if unidade != "Todas":
+    df_kpi = df_kpi[df_kpi[COL["unidade"]] == unidade].copy()
+
+def count_today_global(base_df, date_col, status_col):
+    if date_col not in base_df.columns:
         return 0
-    sub = f[f[date_col].dt.date == hoje.date()]
+    sub = base_df[base_df[date_col].dt.date == hoje.date()]
     if status_col in sub.columns:
-        sub = sub[~sub[status_col].apply(is_done)]
+        sub = sub[~sub[status_col].apply(is_done)]  # remove concluídos
     return int(len(sub))
 
 records_today = []
 if setor == "Pós-Venda":
-    c1 = count_today(COL["c1"], COL["s1"])
-    c2 = count_today(COL["c2"], COL["s2"])
-    c3 = count_today(COL["c3"], COL["s3"])
+    c1 = count_today_global(df_kpi, COL["c1"], COL["s1"])
+    c2 = count_today_global(df_kpi, COL["c2"], COL["s2"])
+    c3 = count_today_global(df_kpi, COL["c3"], COL["s3"])
 
-    for _, r in f.iterrows():
+    for _, r in df_kpi.iterrows():
         for dc, sc in [(COL["c1"], COL["s1"]), (COL["c2"], COL["s2"]), (COL["c3"], COL["s3"])]:
-            if pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
+            d = r.get(dc)
+            if pd.notna(d) and pd.to_datetime(d).date() == hoje.date():
                 records_today.append(status_bucket_today(r.get(sc)))
 else:
     c1 = c2 = c3 = 0
 
 erro_hoje = records_today.count("Erro")
+
+# Esses dois continuam do mês filtrado (como já estava)
 vendas_mes = len(f)
 faturamento = f[COL_VALOR].apply(brl_to_float).sum() if COL_VALOR else 0
 
@@ -442,4 +456,3 @@ with g4:
     else:
         st.info("Coluna de vendedor não encontrada")
     st.markdown("</div></div>", unsafe_allow_html=True)
-
