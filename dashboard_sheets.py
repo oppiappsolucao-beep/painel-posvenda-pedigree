@@ -107,6 +107,7 @@ def ensure_login() -> bool:
     entrar = st.button("Entrar", use_container_width=True)
 
     if entrar:
+        # garante que espaço antes/depois não atrapalhe
         u = (user or "").strip()
         p = (pwd or "").strip()
 
@@ -128,7 +129,7 @@ def ensure_login() -> bool:
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1Q0mLvOBxEGCojUITBLxCXRtpXVMAHE3ngvGsa2Cgf9Q"
-    "/gviz/tq?tqx=out:csv"
+    "/gviz/tq?tqx=out:csv&gid=1396326144"
 )
 
 st.set_page_config(page_title="Painel Pós-Venda", layout="wide")
@@ -235,7 +236,15 @@ def status_bucket_today(status):
 def brl_to_float(v):
     if pd.isna(v):
         return 0.0
-    s = str(v).replace("R$", "").replace(" ", "")
+    # se vier número puro
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        try:
+            return float(v)
+        except:
+            return 0.0
+    s = str(v).replace("R$", "").replace(" ", "").strip()
+    # mantém só números e separadores básicos
+    s = s.replace("\u00a0", "")  # NBSP
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
@@ -304,8 +313,8 @@ COL = {
     "s3": "Status 3º contato",
 }
 
-# >>> IMPORTANTE: inclui "Valor Filhote" (como você disse)
-COL_VALOR = pick_first_existing(df, ["Valor Filhote", "Valor de filhote", "Valor Filhote ", "Valor Filhote", "Valor"])
+# força pegar exatamente "Valor Filhote" (se existir)
+COL_VALOR = pick_first_existing(df, ["Valor Filhote", "Valor de filhote", "Valor Filhote ", "Valor"])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente"])
 
 for c in ["c1", "c2", "c3"]:
@@ -339,22 +348,15 @@ with f3:
     unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-# filtro NORMAL (continua igual) -> usado para vendas no mês, faturamento, gráficos do mês
+# filtro do mês (mantém TUDO igual pro resto do dashboard)
 f = df[df[COL["mes"]].astype(str) == mes].copy()
 if unidade != "Todas":
     f = f[f[COL["unidade"]] == unidade]
 
 # ===============================
-# CONTATOS HOJE (ÚNICA MUDANÇA AQUI)
-# - 1º/2º/3º contato hoje + Status com erro
-# - IGNORA o filtro de MÊS (pega TODOS os meses)
-# - Mantém filtro de UNIDADE (se escolher uma loja)
+# CONTATOS HOJE (AJUSTE: 1º/2º/3º e ERRO contam TODOS OS MESES)
 # ===============================
-df_base = df.copy()
-if unidade != "Todas":
-    df_base = df_base[df_base[COL["unidade"]] == unidade]
-
-def count_today(date_col, status_col):
+def count_today_in(df_base, date_col, status_col):
     if date_col not in df_base.columns:
         return 0
     sub = df_base[df_base[date_col].dt.date == hoje.date()]
@@ -362,13 +364,18 @@ def count_today(date_col, status_col):
         sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
 
+# Base "global" para os KPIs de HOJE: ignora o filtro de mês, mas respeita Unidade
+f_all = df.copy()
+if unidade != "Todas":
+    f_all = f_all[f_all[COL["unidade"]] == unidade]
+
 records_today = []
 if setor == "Pós-Venda":
-    c1 = count_today(COL["c1"], COL["s1"])
-    c2 = count_today(COL["c2"], COL["s2"])
-    c3 = count_today(COL["c3"], COL["s3"])
+    c1 = count_today_in(f_all, COL["c1"], COL["s1"])
+    c2 = count_today_in(f_all, COL["c2"], COL["s2"])
+    c3 = count_today_in(f_all, COL["c3"], COL["s3"])
 
-    for _, r in df_base.iterrows():
+    for _, r in f_all.iterrows():
         for dc, sc in [(COL["c1"], COL["s1"]), (COL["c2"], COL["s2"]), (COL["c3"], COL["s3"])]:
             if pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
                 records_today.append(status_bucket_today(r.get(sc)))
@@ -377,13 +384,8 @@ else:
 
 erro_hoje = records_today.count("Erro")
 
-# ===============================
-# KPIs DO MÊS (IGUAL AO SEU - NÃO MEXI)
-# ===============================
+# (mantém igual) esses continuam do mês selecionado
 vendas_mes = len(f)
-
-# faturamento continua baseado no MÊS selecionado (igual ao seu),
-# mas agora encontra a coluna "Valor Filhote" corretamente
 faturamento = f[COL_VALOR].apply(brl_to_float).sum() if COL_VALOR and (COL_VALOR in f.columns) else 0
 
 # ===============================
