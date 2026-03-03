@@ -442,3 +442,4 @@ with g4:
     else:
         st.info("Coluna de vendedor não encontrada")
     st.markdown("</div></div>", unsafe_allow_html=True)
+
