@@ -4,9 +4,11 @@ import pandas as pd
 import datetime
 import plotly.express as px
 import re
+import time
+from zoneinfo import ZoneInfo
 
 # ===============================
-# LOGIN (ADICIONADO - NÃO MUDA O DASHBOARD)
+# LOGIN (NÃO MUDA O DASHBOARD)
 # ===============================
 APP_USER = "operacao"
 APP_PASS = "100316"
@@ -18,7 +20,6 @@ def ensure_login() -> bool:
     if st.session_state.logged_in:
         return True
 
-    # Tela de login (só aparece antes de liberar o dashboard)
     st.markdown(
         """
         <style>
@@ -61,14 +62,12 @@ def ensure_login() -> bool:
                 margin: 10px 0 14px 0;
             }
 
-            /* labels minúsculos */
             section[data-testid="stTextInput"] label p{
                 text-transform: lowercase;
                 font-weight: 800;
                 color:#334155;
             }
 
-            /* botão preto (sem faixa branca/halo) */
             div.stButton > button{
                 background:#000000 !important;
                 color:#ffffff !important;
@@ -108,7 +107,6 @@ def ensure_login() -> bool:
     entrar = st.button("Entrar", use_container_width=True)
 
     if entrar:
-        # garante que espaço antes/depois não atrapalhe
         u = (user or "").strip()
         p = (pwd or "").strip()
 
@@ -120,12 +118,11 @@ def ensure_login() -> bool:
 
     st.markdown('<div class="hint">Acesso restrito • Operação interna</div>', unsafe_allow_html=True)
     st.markdown("</div></div>", unsafe_allow_html=True)
-
     return False
 
 
 # ===============================
-# CONFIG (IGUAL AO SEU)
+# CONFIG
 # ===============================
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
@@ -140,14 +137,13 @@ if not ensure_login():
     st.stop()
 
 # ===============================
-# CSS (IGUAL AO SEU - NÃO MUDEI)
+# CSS (IGUAL AO SEU)
 # ===============================
 st.markdown(
     """
     <style>
         .stApp { background-color: #F3F4F6; }
 
-        /* resolve título “comendo” no topo */
         .block-container {
             padding-top: 2.4rem !important;
             padding-bottom: 1.6rem !important;
@@ -155,19 +151,16 @@ st.markdown(
 
         h1, h2, h3, h4 { margin-top: 0 !important; padding-top: 0 !important; }
 
-        /* filtros com respiro */
         div[data-baseweb="select"] { margin-top: 10px; }
 
-        /* CARD – tudo branco dentro */
         .panel-card{
             background:#ffffff;
             border-radius:18px;
             box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
             border: 1px solid rgba(15,23,42,0.06);
-            overflow: hidden; /* corta o gráfico nas bordas arredondadas */
+            overflow: hidden;
         }
 
-        /* título do card (sem “faixa branca separada”) */
         .panel-head{
             padding: 14px 16px 0px 16px;
             background:#ffffff;
@@ -192,7 +185,7 @@ st.markdown(
 )
 
 # ===============================
-# PALETA (IGUAL AO SEU)
+# PALETA
 # ===============================
 NAVY = "#1B1D6D"
 WINE = "#9B0033"
@@ -202,10 +195,9 @@ GRAY = "#64748b"
 BAR_SEQ = [NAVY, WINE, NAVY_2, WINE_2, "#334155", "#94a3b8"]
 
 # ===============================
-# HELPERS (IGUAL AO SEU)
+# HELPERS
 # ===============================
 def pick_first_existing(df, candidates):
-    # compara também ignorando NBSP e espaços invisíveis
     cols = {str(c).replace("\u00a0", " ").strip(): c for c in df.columns}
     for c in candidates:
         key = str(c).replace("\u00a0", " ").strip()
@@ -237,12 +229,10 @@ def status_bucket_today(status):
         return "Enviado"
     return "Aguardando"
 
-# ✅ BLINDADO: converte qualquer variação BR (R$ 7.000,00 / 7000,00 / 7.000 / 7000 / etc)
 def brl_to_float(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return 0.0
 
-    # se vier número puro
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
             return float(v)
@@ -250,21 +240,16 @@ def brl_to_float(v):
             return 0.0
 
     s = str(v)
-    s = s.replace("\u00a0", " ")  # NBSP
-    s = s.strip()
+    s = s.replace("\u00a0", " ").strip()
 
     if s == "" or s.lower() in {"nan", "none", "-"}:
         return 0.0
 
     s = s.replace("R$", "").strip()
-    # remove tudo que não seja dígito, vírgula, ponto ou sinal
     s = re.sub(r"[^0-9,\.\-]", "", s)
 
-    # formato BR: remove milhares (.) e troca decimal (,)
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
-    # senão, mantém ponto como decimal (se houver)
-
     try:
         return float(s)
     except:
@@ -311,17 +296,41 @@ def tune_plotly(fig, height=360):
     return fig
 
 # ===============================
-# LOAD DATA (IGUAL AO SEU) + ✅ LIMPEZA DE COLUNAS BLINDADA
+# ATUALIZAÇÃO REAL (TTL + CACHE BUSTER + BOTÃO)
 # ===============================
-@st.cache_data
-def load_sheet():
-    d = pd.read_csv(SHEET_CSV_URL)
-    # remove NBSP e espaços invisíveis dos headers
+def sheet_url_busted(base_url: str) -> str:
+    sep = "&" if "?" in base_url else "?"
+    return f"{base_url}{sep}_ts={int(time.time()*1000)}"
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_sheet(csv_url: str) -> pd.DataFrame:
+    d = pd.read_csv(csv_url)
     d.columns = [str(c).replace("\u00a0", " ").strip() for c in d.columns]
     return d
 
-df = load_sheet()
+TZ = ZoneInfo("America/Sao_Paulo")
+hoje = pd.Timestamp(datetime.datetime.now(TZ).date())
 
+def parse_date_series(s: pd.Series) -> pd.Series:
+    if s is None:
+        return pd.to_datetime(pd.Series([], dtype="object"), errors="coerce")
+    x = s.astype(str).str.strip()
+    x = x.replace({"": None, "nan": None, "None": None})
+    iso = pd.to_datetime(x, errors="coerce", utc=False)
+    mask = iso.isna() & x.notna()
+    if mask.any():
+        br = pd.to_datetime(x[mask], errors="coerce", dayfirst=True)
+        iso.loc[mask] = br
+    return iso
+
+# ===============================
+# LOAD DF
+# ===============================
+df = load_sheet(sheet_url_busted(SHEET_CSV_URL))
+
+# ===============================
+# MAPEAMENTO DE COLUNAS
+# ===============================
 COL = {
     "mes": "Mês",
     "raca": "Raça",
@@ -338,46 +347,50 @@ COL = {
 COL_VALOR = pick_first_existing(df, ["Valor Filhote", "Valor de filhote", "Valor Filhote ", "Valor"])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente"])
 
-for c in ["c1", "c2", "c3"]:
-    if COL[c] in df.columns:
-        df[COL[c]] = pd.to_datetime(df[COL[c]], errors="coerce", dayfirst=True)
-
-hoje = pd.to_datetime(datetime.date.today())
+# parse datas (blindado)
+for key in ["c1", "c2", "c3"]:
+    colname = COL.get(key)
+    if colname and colname in df.columns:
+        df[colname] = parse_date_series(df[colname])
 
 # ===============================
-# HEADER + SAIR (ADICIONE O SAIR SEM MUDAR O LAYOUT)
+# HEADER + BOTÕES
 # ===============================
-top_l, top_r = st.columns([6, 1])
+top_l, top_mid, top_r = st.columns([6, 2, 1])
 with top_l:
     st.markdown("## 📊 Painel de Pós-Venda")
     st.caption(f"Total de registros: **{len(df)}**")
+with top_mid:
+    if st.button("🔄 Atualizar agora", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 with top_r:
     if st.button("Sair", use_container_width=True):
         st.session_state.logged_in = False
         st.rerun()
 
 # ===============================
-# FILTROS (IGUAL AO SEU)
+# FILTROS
 # ===============================
 f1, f2, f3 = st.columns(3)
 with f1:
     setor = st.selectbox("Setor", ["Pós-Venda", "Pedigree"])
 with f2:
     meses = sorted(df[COL["mes"]].dropna().astype(str).unique())
-    mes = st.selectbox("Mês", meses, index=len(meses)-1)
+    mes = st.selectbox("Mês", meses, index=len(meses)-1 if len(meses) else 0)
 with f3:
     unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-# filtro do mês (mantém TUDO igual pro resto do dashboard)
-f = df[df[COL["mes"]].astype(str) == mes].copy()
+# filtro do mês
+f = df[df[COL["mes"]].astype(str) == str(mes)].copy()
 if unidade != "Todas":
     f = f[f[COL["unidade"]] == unidade]
 
 # ===============================
-# CONTATOS HOJE (AJUSTE: 1º/2º/3º e ERRO contam TODOS OS MESES)
+# CONTATOS HOJE (CORRETO) - ignora mês, respeita unidade
 # ===============================
-def count_today_in(df_base, date_col, status_col):
+def count_today_pending(df_base, date_col, status_col):
     if date_col not in df_base.columns:
         return 0
     sub = df_base[df_base[date_col].dt.date == hoje.date()]
@@ -385,42 +398,38 @@ def count_today_in(df_base, date_col, status_col):
         sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
 
-# Base "global" para os KPIs de HOJE: ignora o filtro de mês, mas respeita Unidade
 f_all = df.copy()
 if unidade != "Todas":
     f_all = f_all[f_all[COL["unidade"]] == unidade]
 
 records_today = []
+c1 = c2 = c3 = 0
 if setor == "Pós-Venda":
-    c1 = count_today_in(f_all, COL["c1"], COL["s1"])
-    c2 = count_today_in(f_all, COL["c2"], COL["s2"])
-    c3 = count_today_in(f_all, COL["c3"], COL["s3"])
+    c1 = count_today_pending(f_all, COL["c1"], COL["s1"])
+    c2 = count_today_pending(f_all, COL["c2"], COL["s2"])
+    c3 = count_today_pending(f_all, COL["c3"], COL["s3"])
 
     for _, r in f_all.iterrows():
         for dc, sc in [(COL["c1"], COL["s1"]), (COL["c2"], COL["s2"]), (COL["c3"], COL["s3"])]:
-            if pd.notna(r.get(dc)) and pd.to_datetime(r.get(dc)).date() == hoje.date():
+            dval = r.get(dc)
+            if pd.notna(dval) and pd.to_datetime(dval).date() == hoje.date():
                 records_today.append(status_bucket_today(r.get(sc)))
-else:
-    c1 = c2 = c3 = 0
 
 erro_hoje = records_today.count("Erro")
 
-# (mantém igual) esses continuam do mês selecionado
-vendas_mes = len(f)
-
-# ✅ FATURAMENTO (BLINDADO) — não zera março por causa de NBSP/strings/formatos
+# ===============================
+# VENDAS NO MÊS + FATURAMENTO (CORRETO)
+# ===============================
 if COL_VALOR and (COL_VALOR in f.columns):
-    faturamento = (
-        f[COL_VALOR]
-        .apply(brl_to_float)
-        .fillna(0)
-        .sum()
-    )
+    valor_num = f[COL_VALOR].apply(brl_to_float).fillna(0)
+    vendas_mes = int((valor_num > 0).sum())   # ✅ CORRETO
+    faturamento = float(valor_num.sum())
 else:
+    vendas_mes = 0
     faturamento = 0.0
 
 # ===============================
-# KPIs (IGUAL AO SEU)
+# KPIs
 # ===============================
 st.markdown("---")
 k1, k2, k3, k4, k5, k6 = st.columns(6)
@@ -428,18 +437,21 @@ with k1: kpi_card("💬 1º contato hoje", c1, "pendentes", NAVY)
 with k2: kpi_card("💬 2º contato hoje", c2, "pendentes", NAVY_2)
 with k3: kpi_card("💬 3º contato hoje", c3, "pendentes", WINE_2)
 with k4: kpi_card("⚠️ Status com erro", erro_hoje, "atenção", WINE, value_color="#ef4444" if erro_hoje else "#0f172a")
-with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, mes, "#F59E0B")
+with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, str(mes), "#F59E0B")
 with k6: kpi_card("💰 Faturamento", money_br(faturamento), "valor do filhote", NAVY, value_size=28)
 
 # ===============================
-# GRÁFICOS (IGUAL AO SEU)
+# GRÁFICOS
 # ===============================
 st.markdown("---")
 g1, g2 = st.columns(2)
 g3, g4 = st.columns(2)
 
 with g1:
-    st.markdown('<div class="panel-card"><div class="panel-head"><div class="panel-title">📌 Contatos por Status (hoje)</div></div><div class="panel-body">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="panel-card"><div class="panel-head"><div class="panel-title">📌 Contatos por Status (hoje)</div></div><div class="panel-body">',
+        unsafe_allow_html=True
+    )
     counts = {"Aguardando": 0, "Enviado": 0, "Erro": 0}
     for r in records_today:
         counts[r] = counts.get(r, 0) + 1
@@ -457,36 +469,77 @@ with g1:
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 with g2:
-    st.markdown('<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">', unsafe_allow_html=True)
-    vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")
-    fig = px.bar(vp, x=COL["unidade"], y="Total", text="Total",
-                 color=COL["unidade"], color_discrete_sequence=BAR_SEQ)
-    fig.update_traces(textposition="outside", cliponaxis=False)
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.markdown(
+        '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">',
+        unsafe_allow_html=True
+    )
+    # vendas por unidade (mês selecionado) – só conta linhas com valor > 0
+    if COL_VALOR and (COL_VALOR in f.columns):
+        f_vendas = f.copy()
+        f_vendas["_valor_num"] = f_vendas[COL_VALOR].apply(brl_to_float).fillna(0)
+        f_vendas = f_vendas[f_vendas["_valor_num"] > 0]
+    else:
+        f_vendas = f.copy()
 
-with g3:
-    st.markdown('<div class="panel-card"><div class="panel-head"><div class="panel-title">🐶 Raças mais vendidas (mês)</div></div><div class="panel-body">', unsafe_allow_html=True)
-    vr = (f.groupby(COL["raca"]).size().reset_index(name="Total")
-          .sort_values("Total", ascending=False).head(10))
-    fig = px.bar(vr, x=COL["raca"], y="Total", text="Total",
-                 color=COL["raca"], color_discrete_sequence=BAR_SEQ)
-    fig.update_traces(textposition="outside", cliponaxis=False)
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
-with g4:
-    st.markdown('<div class="panel-card"><div class="panel-head"><div class="panel-title">🏆 Vendas por vendedora (mês)</div></div><div class="panel-body">', unsafe_allow_html=True)
-    if COL_VENDEDOR:
-        vv = (f.groupby(COL_VENDEDOR).size().reset_index(name="Total")
-              .sort_values("Total", ascending=False))
-        fig = px.bar(vv, x=COL_VENDEDOR, y="Total", text="Total",
-                     color=COL_VENDEDOR, color_discrete_sequence=BAR_SEQ)
+    vp = f_vendas.groupby(COL["unidade"]).size().reset_index(name="Total")
+    if len(vp) == 0:
+        st.info("Sem vendas para o filtro selecionado.")
+    else:
+        fig = px.bar(vp, x=COL["unidade"], y="Total", text="Total",
+                     color=COL["unidade"], color_discrete_sequence=BAR_SEQ)
         fig.update_traces(textposition="outside", cliponaxis=False)
         fig.update_layout(showlegend=False)
         st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+with g3:
+    st.markdown(
+        '<div class="panel-card"><div class="panel-head"><div class="panel-title">🐶 Raças mais vendidas (mês)</div></div><div class="panel-body">',
+        unsafe_allow_html=True
+    )
+    # raças – só vendas (valor > 0)
+    if COL_VALOR and (COL_VALOR in f.columns):
+        f_r = f.copy()
+        f_r["_valor_num"] = f_r[COL_VALOR].apply(brl_to_float).fillna(0)
+        f_r = f_r[f_r["_valor_num"] > 0]
+    else:
+        f_r = f.copy()
+
+    if len(f_r) == 0:
+        st.info("Sem vendas para o filtro selecionado.")
+    else:
+        vr = (f_r.groupby(COL["raca"]).size().reset_index(name="Total")
+              .sort_values("Total", ascending=False).head(10))
+        fig = px.bar(vr, x=COL["raca"], y="Total", text="Total",
+                     color=COL["raca"], color_discrete_sequence=BAR_SEQ)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+with g4:
+    st.markdown(
+        '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏆 Vendas por vendedora (mês)</div></div><div class="panel-body">',
+        unsafe_allow_html=True
+    )
+    if COL_VENDEDOR:
+        if COL_VALOR and (COL_VALOR in f.columns):
+            f_v = f.copy()
+            f_v["_valor_num"] = f_v[COL_VALOR].apply(brl_to_float).fillna(0)
+            f_v = f_v[f_v["_valor_num"] > 0]
+        else:
+            f_v = f.copy()
+
+        if len(f_v) == 0:
+            st.info("Sem vendas para o filtro selecionado.")
+        else:
+            vv = (f_v.groupby(COL_VENDEDOR).size().reset_index(name="Total")
+                  .sort_values("Total", ascending=False))
+            fig = px.bar(vv, x=COL_VENDEDOR, y="Total", text="Total",
+                         color=COL_VENDEDOR, color_discrete_sequence=BAR_SEQ)
+            fig.update_traces(textposition="outside", cliponaxis=False)
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(tune_plotly(fig, height=360), use_container_width=True)
     else:
         st.info("Coluna de vendedor não encontrada")
     st.markdown("</div></div>", unsafe_allow_html=True)
