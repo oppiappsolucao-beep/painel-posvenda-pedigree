@@ -8,7 +8,7 @@ import time
 from zoneinfo import ZoneInfo
 
 # ===============================
-# LOGIN (NÃO MUDA O DASHBOARD)
+# LOGIN (ADICIONADO - NÃO MUDA O DASHBOARD)
 # ===============================
 APP_USER = "operacao"
 APP_PASS = "100316"
@@ -20,6 +20,7 @@ def ensure_login() -> bool:
     if st.session_state.logged_in:
         return True
 
+    # Tela de login (só aparece antes de liberar o dashboard)
     st.markdown(
         """
         <style>
@@ -62,12 +63,14 @@ def ensure_login() -> bool:
                 margin: 10px 0 14px 0;
             }
 
+            /* labels minúsculos */
             section[data-testid="stTextInput"] label p{
                 text-transform: lowercase;
                 font-weight: 800;
                 color:#334155;
             }
 
+            /* botão preto (sem faixa branca/halo) */
             div.stButton > button{
                 background:#000000 !important;
                 color:#ffffff !important;
@@ -107,6 +110,7 @@ def ensure_login() -> bool:
     entrar = st.button("Entrar", use_container_width=True)
 
     if entrar:
+        # garante que espaço antes/depois não atrapalhe
         u = (user or "").strip()
         p = (pwd or "").strip()
 
@@ -118,6 +122,7 @@ def ensure_login() -> bool:
 
     st.markdown('<div class="hint">Acesso restrito • Operação interna</div>', unsafe_allow_html=True)
     st.markdown("</div></div>", unsafe_allow_html=True)
+
     return False
 
 
@@ -137,13 +142,14 @@ if not ensure_login():
     st.stop()
 
 # ===============================
-# CSS (IGUAL AO SEU)
+# CSS (IGUAL AO SEU - NÃO MUDEI)
 # ===============================
 st.markdown(
     """
     <style>
         .stApp { background-color: #F3F4F6; }
 
+        /* resolve título “comendo” no topo */
         .block-container {
             padding-top: 2.4rem !important;
             padding-bottom: 1.6rem !important;
@@ -151,16 +157,19 @@ st.markdown(
 
         h1, h2, h3, h4 { margin-top: 0 !important; padding-top: 0 !important; }
 
+        /* filtros com respiro */
         div[data-baseweb="select"] { margin-top: 10px; }
 
+        /* CARD – tudo branco dentro */
         .panel-card{
             background:#ffffff;
             border-radius:18px;
             box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
             border: 1px solid rgba(15,23,42,0.06);
-            overflow: hidden;
+            overflow: hidden; /* corta o gráfico nas bordas arredondadas */
         }
 
+        /* título do card (sem “faixa branca separada”) */
         .panel-head{
             padding: 14px 16px 0px 16px;
             background:#ffffff;
@@ -185,7 +194,7 @@ st.markdown(
 )
 
 # ===============================
-# PALETA
+# PALETA (IGUAL AO SEU)
 # ===============================
 NAVY = "#1B1D6D"
 WINE = "#9B0033"
@@ -195,9 +204,10 @@ GRAY = "#64748b"
 BAR_SEQ = [NAVY, WINE, NAVY_2, WINE_2, "#334155", "#94a3b8"]
 
 # ===============================
-# HELPERS
+# HELPERS (IGUAL AO SEU)
 # ===============================
 def pick_first_existing(df, candidates):
+    # compara também ignorando NBSP e espaços invisíveis
     cols = {str(c).replace("\u00a0", " ").strip(): c for c in df.columns}
     for c in candidates:
         key = str(c).replace("\u00a0", " ").strip()
@@ -229,10 +239,12 @@ def status_bucket_today(status):
         return "Enviado"
     return "Aguardando"
 
+# ✅ BLINDADO: converte qualquer variação BR (R$ 7.000,00 / 7000,00 / 7.000 / 7000 / etc)
 def brl_to_float(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return 0.0
 
+    # se vier número puro
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
             return float(v)
@@ -240,16 +252,21 @@ def brl_to_float(v):
             return 0.0
 
     s = str(v)
-    s = s.replace("\u00a0", " ").strip()
+    s = s.replace("\u00a0", " ")  # NBSP
+    s = s.strip()
 
     if s == "" or s.lower() in {"nan", "none", "-"}:
         return 0.0
 
     s = s.replace("R$", "").strip()
+    # remove tudo que não seja dígito, vírgula, ponto ou sinal
     s = re.sub(r"[^0-9,\.\-]", "", s)
 
+    # formato BR: remove milhares (.) e troca decimal (,)
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
+    # senão, mantém ponto como decimal (se houver)
+
     try:
         return float(s)
     except:
@@ -296,9 +313,10 @@ def tune_plotly(fig, height=360):
     return fig
 
 # ===============================
-# ATUALIZAÇÃO REAL (TTL + CACHE BUSTER + BOTÃO)
+# LOAD DATA (ATUALIZA DE VERDADE)
 # ===============================
 def sheet_url_busted(base_url: str) -> str:
+    # força o Google a não servir cache
     sep = "&" if "?" in base_url else "?"
     return f"{base_url}{sep}_ts={int(time.time()*1000)}"
 
@@ -308,28 +326,32 @@ def load_sheet(csv_url: str) -> pd.DataFrame:
     d.columns = [str(c).replace("\u00a0", " ").strip() for c in d.columns]
     return d
 
+# Hoje em timezone SP
 TZ = ZoneInfo("America/Sao_Paulo")
 hoje = pd.Timestamp(datetime.datetime.now(TZ).date())
 
+# Parser blindado para não inverter dia/mês
 def parse_date_series(s: pd.Series) -> pd.Series:
     if s is None:
         return pd.to_datetime(pd.Series([], dtype="object"), errors="coerce")
     x = s.astype(str).str.strip()
     x = x.replace({"": None, "nan": None, "None": None})
+
+    # tenta ISO primeiro
     iso = pd.to_datetime(x, errors="coerce", utc=False)
+
+    # depois tenta BR com dayfirst
     mask = iso.isna() & x.notna()
     if mask.any():
         br = pd.to_datetime(x[mask], errors="coerce", dayfirst=True)
         iso.loc[mask] = br
+
     return iso
 
-# ===============================
-# LOAD DF
-# ===============================
 df = load_sheet(sheet_url_busted(SHEET_CSV_URL))
 
 # ===============================
-# MAPEAMENTO DE COLUNAS
+# COLUNAS
 # ===============================
 COL = {
     "mes": "Mês",
@@ -347,7 +369,7 @@ COL = {
 COL_VALOR = pick_first_existing(df, ["Valor Filhote", "Valor de filhote", "Valor Filhote ", "Valor"])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente"])
 
-# parse datas (blindado)
+# parse datas
 for key in ["c1", "c2", "c3"]:
     colname = COL.get(key)
     if colname and colname in df.columns:
@@ -370,7 +392,7 @@ with top_r:
         st.rerun()
 
 # ===============================
-# FILTROS
+# FILTROS (IGUAL AO SEU)
 # ===============================
 f1, f2, f3 = st.columns(3)
 with f1:
@@ -382,13 +404,13 @@ with f3:
     unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-# filtro do mês
+# filtro do mês (pela coluna "Mês")
 f = df[df[COL["mes"]].astype(str) == str(mes)].copy()
 if unidade != "Todas":
     f = f[f[COL["unidade"]] == unidade]
 
 # ===============================
-# CONTATOS HOJE (CORRETO) - ignora mês, respeita unidade
+# CONTATOS HOJE (1º/2º/3º) - ignora mês, respeita unidade
 # ===============================
 def count_today_pending(df_base, date_col, status_col):
     if date_col not in df_base.columns:
@@ -418,14 +440,13 @@ if setor == "Pós-Venda":
 erro_hoje = records_today.count("Erro")
 
 # ===============================
-# VENDAS NO MÊS + FATURAMENTO (CORRETO)
+# VENDAS NO MÊS + FATURAMENTO (pela coluna "Mês")
 # ===============================
+vendas_mes = int(len(f))  # ✅ agora é por "Mês" (e já respeita Unidade)
+
 if COL_VALOR and (COL_VALOR in f.columns):
-    valor_num = f[COL_VALOR].apply(brl_to_float).fillna(0)
-    vendas_mes = int((valor_num > 0).sum())   # ✅ CORRETO
-    faturamento = float(valor_num.sum())
+    faturamento = float(f[COL_VALOR].apply(brl_to_float).fillna(0).sum())
 else:
-    vendas_mes = 0
     faturamento = 0.0
 
 # ===============================
@@ -473,17 +494,9 @@ with g2:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    # vendas por unidade (mês selecionado) – só conta linhas com valor > 0
-    if COL_VALOR and (COL_VALOR in f.columns):
-        f_vendas = f.copy()
-        f_vendas["_valor_num"] = f_vendas[COL_VALOR].apply(brl_to_float).fillna(0)
-        f_vendas = f_vendas[f_vendas["_valor_num"] > 0]
-    else:
-        f_vendas = f.copy()
-
-    vp = f_vendas.groupby(COL["unidade"]).size().reset_index(name="Total")
+    vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")  # ✅ por Mês
     if len(vp) == 0:
-        st.info("Sem vendas para o filtro selecionado.")
+        st.info("Sem registros para o filtro selecionado.")
     else:
         fig = px.bar(vp, x=COL["unidade"], y="Total", text="Total",
                      color=COL["unidade"], color_discrete_sequence=BAR_SEQ)
@@ -497,19 +510,11 @@ with g3:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🐶 Raças mais vendidas (mês)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    # raças – só vendas (valor > 0)
-    if COL_VALOR and (COL_VALOR in f.columns):
-        f_r = f.copy()
-        f_r["_valor_num"] = f_r[COL_VALOR].apply(brl_to_float).fillna(0)
-        f_r = f_r[f_r["_valor_num"] > 0]
+    vr = (f.groupby(COL["raca"]).size().reset_index(name="Total")
+          .sort_values("Total", ascending=False).head(10))  # ✅ por Mês
+    if len(vr) == 0:
+        st.info("Sem registros para o filtro selecionado.")
     else:
-        f_r = f.copy()
-
-    if len(f_r) == 0:
-        st.info("Sem vendas para o filtro selecionado.")
-    else:
-        vr = (f_r.groupby(COL["raca"]).size().reset_index(name="Total")
-              .sort_values("Total", ascending=False).head(10))
         fig = px.bar(vr, x=COL["raca"], y="Total", text="Total",
                      color=COL["raca"], color_discrete_sequence=BAR_SEQ)
         fig.update_traces(textposition="outside", cliponaxis=False)
@@ -523,18 +528,11 @@ with g4:
         unsafe_allow_html=True
     )
     if COL_VENDEDOR:
-        if COL_VALOR and (COL_VALOR in f.columns):
-            f_v = f.copy()
-            f_v["_valor_num"] = f_v[COL_VALOR].apply(brl_to_float).fillna(0)
-            f_v = f_v[f_v["_valor_num"] > 0]
+        vv = (f.groupby(COL_VENDEDOR).size().reset_index(name="Total")
+              .sort_values("Total", ascending=False))  # ✅ por Mês
+        if len(vv) == 0:
+            st.info("Sem registros para o filtro selecionado.")
         else:
-            f_v = f.copy()
-
-        if len(f_v) == 0:
-            st.info("Sem vendas para o filtro selecionado.")
-        else:
-            vv = (f_v.groupby(COL_VENDEDOR).size().reset_index(name="Total")
-                  .sort_values("Total", ascending=False))
             fig = px.bar(vv, x=COL_VENDEDOR, y="Total", text="Total",
                          color=COL_VENDEDOR, color_discrete_sequence=BAR_SEQ)
             fig.update_traces(textposition="outside", cliponaxis=False)
