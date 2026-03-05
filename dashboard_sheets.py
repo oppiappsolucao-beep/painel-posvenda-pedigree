@@ -142,6 +142,12 @@ if not ensure_login():
     st.stop()
 
 # ===============================
+# AUTO-REFRESH (atualiza sozinho)
+# ✅ Atualiza automaticamente a cada 10s e puxa planilha nova
+# ===============================
+components.html("<script>setTimeout(() => window.location.reload(), 10000);</script>", height=0)
+
+# ===============================
 # CSS (IGUAL AO SEU - NÃO MUDEI)
 # ===============================
 st.markdown(
@@ -207,7 +213,6 @@ BAR_SEQ = [NAVY, WINE, NAVY_2, WINE_2, "#334155", "#94a3b8"]
 # HELPERS (IGUAL AO SEU)
 # ===============================
 def pick_first_existing(df, candidates):
-    # compara também ignorando NBSP e espaços invisíveis
     cols = {str(c).replace("\u00a0", " ").strip(): c for c in df.columns}
     for c in candidates:
         key = str(c).replace("\u00a0", " ").strip()
@@ -239,34 +244,21 @@ def status_bucket_today(status):
         return "Enviado"
     return "Aguardando"
 
-# ✅ BLINDADO: converte qualquer variação BR (R$ 7.000,00 / 7000,00 / 7.000 / 7000 / etc)
 def brl_to_float(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return 0.0
-
-    # se vier número puro
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
             return float(v)
         except:
             return 0.0
-
-    s = str(v)
-    s = s.replace("\u00a0", " ")  # NBSP
-    s = s.strip()
-
+    s = str(v).replace("\u00a0", " ").strip()
     if s == "" or s.lower() in {"nan", "none", "-"}:
         return 0.0
-
     s = s.replace("R$", "").strip()
-    # remove tudo que não seja dígito, vírgula, ponto ou sinal
     s = re.sub(r"[^0-9,\.\-]", "", s)
-
-    # formato BR: remove milhares (.) e troca decimal (,)
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
-    # senão, mantém ponto como decimal (se houver)
-
     try:
         return float(s)
     except:
@@ -313,46 +305,45 @@ def tune_plotly(fig, height=360):
     return fig
 
 # ===============================
-# LOAD DATA (ATUALIZA DE VERDADE)
+# LOAD DATA (ATUALIZA IMEDIATO)
+# ✅ cache curtíssimo + cache-buster
 # ===============================
 def sheet_url_busted(base_url: str) -> str:
-    # força o Google a não servir cache
     sep = "&" if "?" in base_url else "?"
     return f"{base_url}{sep}_ts={int(time.time()*1000)}"
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=2, show_spinner=False)  # ✅ pega mudança quase na hora
 def load_sheet(csv_url: str) -> pd.DataFrame:
     d = pd.read_csv(csv_url)
     d.columns = [str(c).replace("\u00a0", " ").strip() for c in d.columns]
     return d
 
-# Hoje em timezone SP
 TZ = ZoneInfo("America/Sao_Paulo")
 hoje = pd.Timestamp(datetime.datetime.now(TZ).date())
 
-# Parser blindado para não inverter dia/mês
+# ✅ CORREÇÃO 1º/2º/3º contato:
+# se tiver "/" -> força dayfirst=True sempre
 def parse_date_series(s: pd.Series) -> pd.Series:
     if s is None:
         return pd.to_datetime(pd.Series([], dtype="object"), errors="coerce")
-    x = s.astype(str).str.strip()
+
+    x = s.astype(str).str.replace("\u00a0", " ").str.strip()
     x = x.replace({"": None, "nan": None, "None": None})
 
-    # tenta ISO primeiro
-    iso = pd.to_datetime(x, errors="coerce", utc=False)
+    out = pd.Series(pd.NaT, index=x.index, dtype="datetime64[ns]")
 
-    # depois tenta BR com dayfirst
-    mask = iso.isna() & x.notna()
-    if mask.any():
-        br = pd.to_datetime(x[mask], errors="coerce", dayfirst=True)
-        iso.loc[mask] = br
+    mask_br = x.notna() & x.str.contains("/", regex=False)
+    if mask_br.any():
+        out.loc[mask_br] = pd.to_datetime(x.loc[mask_br], errors="coerce", dayfirst=True)
 
-    return iso
+    mask_other = x.notna() & ~mask_br
+    if mask_other.any():
+        out.loc[mask_other] = pd.to_datetime(x.loc[mask_other], errors="coerce")
+
+    return out
 
 df = load_sheet(sheet_url_busted(SHEET_CSV_URL))
 
-# ===============================
-# COLUNAS
-# ===============================
 COL = {
     "mes": "Mês",
     "raca": "Raça",
@@ -365,11 +356,9 @@ COL = {
     "s3": "Status 3º contato",
 }
 
-# força pegar exatamente "Valor Filhote" (se existir)
 COL_VALOR = pick_first_existing(df, ["Valor Filhote", "Valor de filhote", "Valor Filhote ", "Valor"])
 COL_VENDEDOR = pick_first_existing(df, ["Vendedor", "Vendedora", "Atendente"])
 
-# parse datas
 for key in ["c1", "c2", "c3"]:
     colname = COL.get(key)
     if colname and colname in df.columns:
@@ -392,7 +381,7 @@ with top_r:
         st.rerun()
 
 # ===============================
-# FILTROS (IGUAL AO SEU)
+# FILTROS
 # ===============================
 f1, f2, f3 = st.columns(3)
 with f1:
@@ -404,7 +393,6 @@ with f3:
     unidades = ["Todas"] + sorted(df[COL["unidade"]].dropna().unique().tolist())
     unidade = st.selectbox("Unidade", unidades)
 
-# filtro do mês (pela coluna "Mês")
 f = df[df[COL["mes"]].astype(str) == str(mes)].copy()
 if unidade != "Todas":
     f = f[f[COL["unidade"]] == unidade]
@@ -442,7 +430,7 @@ erro_hoje = records_today.count("Erro")
 # ===============================
 # VENDAS NO MÊS + FATURAMENTO (pela coluna "Mês")
 # ===============================
-vendas_mes = int(len(f))  # ✅ agora é por "Mês" (e já respeita Unidade)
+vendas_mes = int(len(f))
 
 if COL_VALOR and (COL_VALOR in f.columns):
     faturamento = float(f[COL_VALOR].apply(brl_to_float).fillna(0).sum())
@@ -494,7 +482,7 @@ with g2:
         '<div class="panel-card"><div class="panel-head"><div class="panel-title">🏬 Vendas por loja (Unidade)</div></div><div class="panel-body">',
         unsafe_allow_html=True
     )
-    vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")  # ✅ por Mês
+    vp = f.groupby(COL["unidade"]).size().reset_index(name="Total")
     if len(vp) == 0:
         st.info("Sem registros para o filtro selecionado.")
     else:
@@ -511,7 +499,7 @@ with g3:
         unsafe_allow_html=True
     )
     vr = (f.groupby(COL["raca"]).size().reset_index(name="Total")
-          .sort_values("Total", ascending=False).head(10))  # ✅ por Mês
+          .sort_values("Total", ascending=False).head(10))
     if len(vr) == 0:
         st.info("Sem registros para o filtro selecionado.")
     else:
@@ -529,7 +517,7 @@ with g4:
     )
     if COL_VENDEDOR:
         vv = (f.groupby(COL_VENDEDOR).size().reset_index(name="Total")
-              .sort_values("Total", ascending=False))  # ✅ por Mês
+              .sort_values("Total", ascending=False))
         if len(vv) == 0:
             st.info("Sem registros para o filtro selecionado.")
         else:
