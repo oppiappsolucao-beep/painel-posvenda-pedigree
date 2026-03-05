@@ -110,7 +110,6 @@ def ensure_login() -> bool:
     entrar = st.button("Entrar", use_container_width=True)
 
     if entrar:
-        # garante que espaço antes/depois não atrapalhe
         u = (user or "").strip()
         p = (pwd or "").strip()
 
@@ -200,7 +199,7 @@ st.markdown(
 )
 
 # ===============================
-# PALETA (IGUAL AO SEU)
+# PALETA
 # ===============================
 NAVY = "#1B1D6D"
 WINE = "#9B0033"
@@ -210,7 +209,7 @@ GRAY = "#64748b"
 BAR_SEQ = [NAVY, WINE, NAVY_2, WINE_2, "#334155", "#94a3b8"]
 
 # ===============================
-# HELPERS (IGUAL AO SEU)
+# HELPERS
 # ===============================
 def pick_first_existing(df, candidates):
     cols = {str(c).replace("\u00a0", " ").strip(): c for c in df.columns}
@@ -226,7 +225,8 @@ def norm(x):
 def is_done(status):
     return norm(status) in [
         "feito","concluido","concluído","ok",
-        "realizado","finalizado","concluida","concluída"
+        "realizado","finalizado","concluida","concluída",
+        "enviado","enviada"  # (mantém pra outros usos, mas KPI de "hoje" não filtra mais)
     ]
 
 def is_error(status):
@@ -312,7 +312,7 @@ def sheet_url_busted(base_url: str) -> str:
     sep = "&" if "?" in base_url else "?"
     return f"{base_url}{sep}_ts={int(time.time()*1000)}"
 
-@st.cache_data(ttl=2, show_spinner=False)  # ✅ pega mudança quase na hora
+@st.cache_data(ttl=2, show_spinner=False)
 def load_sheet(csv_url: str) -> pd.DataFrame:
     d = pd.read_csv(csv_url)
     d.columns = [str(c).replace("\u00a0", " ").strip() for c in d.columns]
@@ -321,8 +321,8 @@ def load_sheet(csv_url: str) -> pd.DataFrame:
 TZ = ZoneInfo("America/Sao_Paulo")
 hoje = pd.Timestamp(datetime.datetime.now(TZ).date())
 
-# ✅ CORREÇÃO 1º/2º/3º contato:
-# se tiver "/" -> força dayfirst=True sempre
+# ✅ Parser corrigido:
+# se tiver "/" -> força dayfirst=True sempre (dd/mm/aaaa)
 def parse_date_series(s: pd.Series) -> pd.Series:
     if s is None:
         return pd.to_datetime(pd.Series([], dtype="object"), errors="coerce")
@@ -344,6 +344,9 @@ def parse_date_series(s: pd.Series) -> pd.Series:
 
 df = load_sheet(sheet_url_busted(SHEET_CSV_URL))
 
+# ===============================
+# COLUNAS
+# ===============================
 COL = {
     "mes": "Mês",
     "raca": "Raça",
@@ -399,13 +402,12 @@ if unidade != "Todas":
 
 # ===============================
 # CONTATOS HOJE (1º/2º/3º) - ignora mês, respeita unidade
+# ✅ AGORA CONTA TODOS DO DIA (Enviado + Aguardando + Erro)
 # ===============================
-def count_today_pending(df_base, date_col, status_col):
+def count_today_all(df_base, date_col):
     if date_col not in df_base.columns:
         return 0
     sub = df_base[df_base[date_col].dt.date == hoje.date()]
-    if status_col in sub.columns:
-        sub = sub[~sub[status_col].apply(is_done)]
     return int(len(sub))
 
 f_all = df.copy()
@@ -415,9 +417,9 @@ if unidade != "Todas":
 records_today = []
 c1 = c2 = c3 = 0
 if setor == "Pós-Venda":
-    c1 = count_today_pending(f_all, COL["c1"], COL["s1"])
-    c2 = count_today_pending(f_all, COL["c2"], COL["s2"])
-    c3 = count_today_pending(f_all, COL["c3"], COL["s3"])
+    c1 = count_today_all(f_all, COL["c1"])
+    c2 = count_today_all(f_all, COL["c2"])
+    c3 = count_today_all(f_all, COL["c3"])
 
     for _, r in f_all.iterrows():
         for dc, sc in [(COL["c1"], COL["s1"]), (COL["c2"], COL["s2"]), (COL["c3"], COL["s3"])]:
@@ -442,9 +444,9 @@ else:
 # ===============================
 st.markdown("---")
 k1, k2, k3, k4, k5, k6 = st.columns(6)
-with k1: kpi_card("💬 1º contato hoje", c1, "pendentes", NAVY)
-with k2: kpi_card("💬 2º contato hoje", c2, "pendentes", NAVY_2)
-with k3: kpi_card("💬 3º contato hoje", c3, "pendentes", WINE_2)
+with k1: kpi_card("💬 1º contato hoje", c1, "registros de hoje", NAVY)
+with k2: kpi_card("💬 2º contato hoje", c2, "registros de hoje", NAVY_2)
+with k3: kpi_card("💬 3º contato hoje", c3, "registros de hoje", WINE_2)
 with k4: kpi_card("⚠️ Status com erro", erro_hoje, "atenção", WINE, value_color="#ef4444" if erro_hoje else "#0f172a")
 with k5: kpi_card("🛍️ Vendas no mês", vendas_mes, str(mes), "#F59E0B")
 with k6: kpi_card("💰 Faturamento", money_br(faturamento), "valor do filhote", NAVY, value_size=28)
